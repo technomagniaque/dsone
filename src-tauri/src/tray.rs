@@ -74,7 +74,7 @@ pub(crate) fn restore_window(app: &tauri::AppHandle) {
 
 impl ksni::Tray for SoneTray {
     fn id(&self) -> String {
-        "sone".into()
+        "dsone".into()
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {

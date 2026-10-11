@@ -114,7 +114,7 @@ pub fn validate(raw: &ThemeFile) -> Result<ThemeFile, String> {
 fn config_sone_dir() -> Result<PathBuf, String> {
     let dir = dirs::config_dir()
         .ok_or_else(|| "config directory is unresolvable".to_string())?
-        .join("sone");
+        .join("dsone");
     fs::create_dir_all(&dir).map_err(|e| format!("failed to create {dir:?}: {e}"))?;
     Ok(dir)
 }

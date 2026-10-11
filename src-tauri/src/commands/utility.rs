@@ -8,7 +8,7 @@ use crate::AppState;
 use crate::SignalPath;
 use crate::SoneError;
 
-/// Open the SONE log directory (`~/.config/sone/logs`) in the system file
+/// Open the SONE log directory (`~/.config/dsone/logs`) in the system file
 /// manager, creating it if it does not exist yet.
 #[tauri::command]
 pub fn open_log_folder() -> Result<(), String> {

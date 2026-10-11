@@ -40,6 +40,9 @@ finish-args:
   # MPRIS: the bus name is org.mpris.MediaPlayer2.io.github.technomagniaque.dsone
   # (src-tauri/src/mpris.rs), which Flatpak lets the app own without --own-name.
   - --talk-name=org.kde.StatusNotifierWatcher
+  # Desktop notification when exclusive output falls back to PipeWire
+  # (src-tauri/src/audio_output.rs, with a Retry action).
+  - --talk-name=org.freedesktop.Notifications
   # Discord Rich Presence (same set as upstream; see src-tauri/src/discord_ipc.rs).
   - --filesystem=xdg-run/discord-ipc-0:ro
   - --filesystem=xdg-run/discord-ipc-1:ro

@@ -19,7 +19,7 @@ impl Crypto {
     /// Load or generate the master key and construct the cipher.
     ///
     /// Key sources (in order):
-    /// 1. OS keyring (service "sone", entry "master-key")
+    /// 1. OS keyring (service "dsone", entry "master-key")
     /// 2. File fallback at `config_dir/sone.key` (created with 0600 perms)
     pub fn new(config_dir: &Path) -> Result<Self, SoneError> {
         let mut raw_key = load_or_generate_key(config_dir)?;
@@ -110,7 +110,7 @@ fn load_or_generate_key(config_dir: &Path) -> Result<[u8; 32], SoneError> {
 }
 
 fn load_key_from_keyring() -> Result<[u8; 32], String> {
-    let entry = keyring::Entry::new("sone", "master-key").map_err(|e| e.to_string())?;
+    let entry = keyring::Entry::new("dsone", "master-key").map_err(|e| e.to_string())?;
     let secret = entry.get_secret().map_err(|e| e.to_string())?;
     if secret.len() != 32 {
         return Err(format!("keyring key wrong length: {}", secret.len()));
@@ -121,7 +121,7 @@ fn load_key_from_keyring() -> Result<[u8; 32], String> {
 }
 
 fn store_key_in_keyring(key: &[u8; 32]) -> Result<(), String> {
-    let entry = keyring::Entry::new("sone", "master-key").map_err(|e| e.to_string())?;
+    let entry = keyring::Entry::new("dsone", "master-key").map_err(|e| e.to_string())?;
     entry.set_secret(key).map_err(|e| e.to_string())
 }
 

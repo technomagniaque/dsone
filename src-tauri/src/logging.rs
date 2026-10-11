@@ -4,7 +4,7 @@
 use std::path::Path;
 
 /// Read the logging toggle from the plaintext sidecar file at
-/// `~/.config/sone/logging.toggle`. The file must contain literally
+/// `~/.config/dsone/logging.toggle`. The file must contain literally
 /// `"true"` or `"false"` (trailing whitespace/newlines are trimmed).
 ///
 /// Defaults to `true` on any failure (missing file, unreadable, or
@@ -63,7 +63,7 @@ pub fn init_logging(log_dir: PathBuf, file_enabled: bool) -> LoggerHandle {
     }
 
     match base
-        .log_to_file(FileSpec::default().directory(&log_dir).basename("sone"))
+        .log_to_file(FileSpec::default().directory(&log_dir).basename("dsone"))
         .duplicate_to_stderr(Duplicate::All)
         .rotate(
             Criterion::Size(5_000_000),       // 5 MB

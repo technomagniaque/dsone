@@ -87,13 +87,14 @@ flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest \
 | `--filesystem=xdg-run/discord-ipc-*` etc. | Discord Rich Presence, liste identique à upstream. |
 | `--env=WEBKIT_DISABLE_COMPOSITING_MODE=1` | Repris d'upstream. |
 
+- `--talk-name=org.freedesktop.Notifications` : notification de bureau (avec un
+  bouton « Retry ») quand la sortie exclusive échoue et que la lecture repasse
+  sur PipeWire (`src-tauri/src/audio_output.rs`).
+
 Volontairement absents :
 - `--own-name=org.mpris.MediaPlayer2.dsone` : le nom MPRIS est
   `org.mpris.MediaPlayer2.io.github.technomagniaque.dsone` (`src-tauri/src/mpris.rs`),
   que Flatpak autorise d'office ; le nom court `dsone` n'est utilisé que sous Snap.
-- `--talk-name=org.freedesktop.Notifications` : l'application n'envoie aucune
-  notification de bureau (aucun appel dans le code) ; Flathub refuse les
-  permissions inutiles.
 - `--talk-name=org.freedesktop.secrets` : comme upstream ; la clé est alors
   stockée dans un fichier `0600` du bac à sable (`src-tauri/src/crypto.rs`).
 

@@ -28,10 +28,9 @@ Le changement d'identifiant change les dossiers de données gérés par Tauri
 (`~/.local/share/io.github.technomagniaque.dsone`, cache WebKit, état des
 fenêtres) et, en Flatpak, tout le bac à sable (`~/.var/app/io.github.technomagniaque.dsone/`) :
 dsone ne reprend donc ni la session ni les réglages d'une installation SONE.
-En installation native, les réglages applicatifs restent pour l'instant dans
-`~/.config/sone/` (chemin codé en dur dans le code Rust) et le trousseau utilise
-le service `sone` : dsone et SONE installés nativement sur la même session
-partagent ces fichiers.
+En installation native, les réglages applicatifs sont dans `~/.config/dsone/`
+et la clé de chiffrement dans le trousseau sous le service `dsone` : dsone et
+SONE peuvent cohabiter sur la même session sans partager leurs réglages.
 
 ### Installation et compatibilité
 

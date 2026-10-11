@@ -279,11 +279,11 @@ pub struct AppState {
 /// it while the process is still single-threaded, long before the keyring and
 /// the decryption key are available.
 ///
-/// `AppState::new` falls back to `./sone` when there is no user config dir at
+/// `AppState::new` falls back to `./dsone` when there is no user config dir at
 /// all; this returns `None` there instead, so the startup scrub simply does
 /// nothing rather than reading a sidecar from the working directory.
 pub fn config_dir_for_env() -> Option<std::path::PathBuf> {
-    dirs::config_dir().map(|d| d.join("sone"))
+    dirs::config_dir().map(|d| d.join("dsone"))
 }
 
 pub fn now_secs() -> u64 {
@@ -320,7 +320,7 @@ impl AppState {
     fn new(app_handle: tauri::AppHandle) -> Self {
         // Get config dir
         let mut config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        config_dir.push("sone");
+        config_dir.push("dsone");
         fs::create_dir_all(&config_dir).ok();
 
         let settings_path = config_dir.join("settings.json");
