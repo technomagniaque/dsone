@@ -73,7 +73,13 @@ function isCredentialRelatedError(err: unknown): boolean {
   return false;
 }
 
-export default function Login() {
+interface LoginProps {
+  /** Screen shown first: "deezer" at startup (TIDAL is optional), the
+   *  TIDAL sign-in when opened from the menu. */
+  initialView?: View;
+}
+
+export default function Login({ initialView = "simple" }: LoginProps = {}) {
   const {
     startPkceAuth,
     completePkceAuth,
@@ -86,7 +92,7 @@ export default function Login() {
   const [, setIsAuthenticated] = useAtom(isAuthenticatedAtom);
   const deezerUser = useAtomValue(deezerUserAtom);
 
-  const [view, setView] = useState<View>("simple");
+  const [view, setView] = useState<View>(initialView);
   const [simpleTab, setSimpleTab] = useState<SimpleTab>("pkce");
   const [step, setStep] = useState<
     | "idle"
@@ -764,7 +770,14 @@ export default function Login() {
             <p className="text-th-text-muted mb-6 text-lg">
               Connect your Deezer account
             </p>
-            <DeezerLoginForm onCancel={() => setView("simple")} />
+            <DeezerLoginForm
+              onCancel={() => setView("simple")}
+              cancelLabel={
+                initialView === "deezer"
+                  ? "Sign in with TIDAL instead (optional)"
+                  : "Back"
+              }
+            />
           </>
         )}
 

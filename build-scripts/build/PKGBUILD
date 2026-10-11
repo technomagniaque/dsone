@@ -4,7 +4,7 @@
 # Arch Linux / CachyOS package for dsone. Repackages the .deb produced by
 # `pnpm tauri build --bundles deb` (Tauri cannot emit pacman packages itself).
 pkgname=dsone
-pkgver=0.22.1
+pkgver=0.23.0
 pkgrel=1
 pkgdesc="Unofficial Deezer and TIDAL desktop client with bit-perfect audio (fork of SONE)"
 arch=('x86_64')

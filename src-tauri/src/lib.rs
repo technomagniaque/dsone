@@ -682,7 +682,7 @@ pub fn run() {
                     }
                 }),
             )?;
-            // Deep link: register tidal:// scheme handler
+            // Deep link: register tidal:// and deezer:// (Deezer browser sign-in) handlers
             app.handle().plugin(tauri_plugin_deep_link::init())?;
             #[cfg(target_os = "linux")]
             if let Err(e) = app.deep_link().register_all() {

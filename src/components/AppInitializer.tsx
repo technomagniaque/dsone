@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { useDeezerAutologListener } from "../hooks/useDeezerBrowserLogin";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { parseTidalUrl } from "../lib/tidalUrl";
 import { updateToastSeenAtom } from "../atoms/updates";
@@ -183,6 +184,9 @@ function sanitizeTracksForPersistence(
 }
 
 export function AppInitializer() {
+  // deezer://autolog/<ARL> from Deezer's browser sign-in (any time, no TIDAL needed)
+  useDeezerAutologListener();
+
   // Preload subscribes to auth state (single re-render on login)
   const isAuthenticated = useAtomValue(isAuthenticatedAtom);
 

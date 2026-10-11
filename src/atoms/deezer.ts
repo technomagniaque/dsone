@@ -20,6 +20,15 @@ export const deezerAuthCheckingAtom = atom(true);
 /** Deezer favourite ("Coups de cœur") track ids — separate from TIDAL ids,
  *  since the two id spaces overlap. */
 export const deezerFavoriteTrackIdsAtom = atom<Set<number>>(new Set<number>());
+/** Progress of the browser sign-in (Deezer's page → deezer://autolog link). */
+export type DeezerBrowserLogin =
+  | { state: "idle" }
+  | { state: "waiting" }
+  | { state: "signing-in" }
+  | { state: "error"; message: string };
+export const deezerBrowserLoginAtom = atom<DeezerBrowserLogin>({
+  state: "idle",
+});
 export const deezerQualityAtom = atom<DeezerQuality>("FLAC");
 /** Search source picked by the user; null = automatic (TIDAL when signed in). */
 export const searchProviderAtom = atomWithStorage<Provider | null>(

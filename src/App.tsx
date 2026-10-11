@@ -75,10 +75,11 @@ function AppContent() {
     );
   }
 
+  // Nobody signed in: Deezer first, TIDAL stays one click away (optional).
   if (!isAuthenticated && !deezerUser) {
     return (
       <AppChrome>
-        <Login />
+        <Login initialView="deezer" />
       </AppChrome>
     );
   }

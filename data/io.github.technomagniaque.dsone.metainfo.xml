@@ -127,6 +127,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.23.0" date="2026-10-11">
+      <description>
+        <p>Deezer-first: TIDAL sign-in is optional, and Deezer sign-in opens Deezer's own page in the browser.</p>
+      </description>
+    </release>
     <release version="0.22.1" date="2026-10-11">
       <description>
         <p>First dsone release, based on SONE 0.22.1</p>
