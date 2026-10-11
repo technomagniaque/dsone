@@ -26,6 +26,11 @@ import { useNavigation } from "./hooks/useNavigation";
 import { useAtomValue } from "jotai";
 import { currentViewAtom } from "./atoms/navigation";
 import { isAuthCheckingAtom } from "./atoms/auth";
+import { deezerAuthCheckingAtom, deezerUserAtom } from "./atoms/deezer";
+import DeezerHome from "./components/deezer/DeezerHome";
+import DeezerTracksView from "./components/deezer/DeezerTracksView";
+import DeezerPlaylistView from "./components/deezer/DeezerPlaylistView";
+import DeezerArtistPage from "./components/deezer/DeezerArtistPage";
 import { decorationsAtom, hideTitleBarAtom } from "./atoms/ui";
 import { ToastProvider } from "./contexts/ToastContext";
 import { useTheme } from "./hooks/useTheme";
@@ -53,10 +58,14 @@ function AppChrome({ children }: { children: ReactNode }) {
 function AppContent() {
   const { isAuthenticated } = useAuth();
   const isAuthChecking = useAtomValue(isAuthCheckingAtom);
+  const deezerUser = useAtomValue(deezerUserAtom);
+  const deezerChecking = useAtomValue(deezerAuthCheckingAtom);
   const { navigateHome, navigateToExplore } = useNavigation();
   const currentView = useAtomValue(currentViewAtom);
 
-  if (isAuthChecking) {
+  // Either service alone is enough to enter the app. While TIDAL is not
+  // signed in, wait for the Deezer restore too before showing the login.
+  if (isAuthChecking || (!isAuthenticated && deezerChecking)) {
     return (
       <AppChrome>
         <div className="flex h-full w-full items-center justify-center bg-th-background">
@@ -66,7 +75,7 @@ function AppContent() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !deezerUser) {
     return (
       <AppChrome>
         <Login />
@@ -79,13 +88,24 @@ function AppContent() {
       case "album":
         return (
           <AlbumView
-            key={currentView.albumId}
+            key={`${currentView.provider ?? "tidal"}:${currentView.albumId}`}
             albumId={currentView.albumId}
             albumInfo={currentView.albumInfo}
+            provider={currentView.provider}
             onBack={navigateHome}
           />
         );
       case "playlist":
+        if (currentView.provider === "deezer") {
+          return (
+            <DeezerPlaylistView
+              key={`deezer:${currentView.playlistId}`}
+              playlistId={currentView.playlistId}
+              playlistInfo={currentView.playlistInfo}
+              onBack={navigateHome}
+            />
+          );
+        }
         return (
           <PlaylistView
             key={currentView.playlistId}
@@ -99,9 +119,10 @@ function AppContent() {
       case "search":
         return (
           <SearchView
-            key={currentView.query}
+            key={`${currentView.provider ?? ""}:${currentView.query}`}
             query={currentView.query}
             initialTab={currentView.tab}
+            provider={currentView.provider}
             onBack={navigateHome}
           />
         );
@@ -116,6 +137,16 @@ function AppContent() {
           />
         );
       case "artist":
+        if (currentView.provider === "deezer") {
+          return (
+            <DeezerArtistPage
+              key={`deezer:${currentView.artistId}`}
+              artistId={currentView.artistId}
+              artistInfo={currentView.artistInfo}
+              onBack={navigateHome}
+            />
+          );
+        }
         return (
           <ArtistPage
             key={currentView.artistId}
@@ -172,9 +203,19 @@ function AppContent() {
             folderName={currentView.folderName}
           />
         );
+      case "deezerHome":
+        return <DeezerHome />;
+      case "deezerFavorites":
+        return <DeezerTracksView key="favorites" kind="favorites" />;
+      case "deezerFlow":
+        return <DeezerTracksView key="flow" kind="flow" />;
+      case "tidalLogin":
+        return isAuthenticated ? <Home /> : <Login />;
       case "home":
       default:
-        return <Home />;
+        // Deezer-only session: the TIDAL home would only fail; Deezer's
+        // home takes its place.
+        return isAuthenticated ? <Home /> : <DeezerHome />;
     }
   };
 

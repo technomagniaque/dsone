@@ -20,6 +20,9 @@ import { useDrawer } from "./useDrawer";
 import { useNavigation } from "./useNavigation";
 import { useToast } from "../contexts/ToastContext";
 import { getTrackShareUrl } from "../utils/itemHelpers";
+import { isDeezer } from "../lib/provider";
+import { deezerViewForSource, getDeezerShareUrl } from "../lib/deezerSources";
+import { deezerFavoriteTrackIdsAtom } from "../atoms/deezer";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -64,7 +67,9 @@ export function useMiniplayerEmitter() {
     const shuffle = store.get(shuffleAtom);
     const repeat = store.get(repeatAtom);
     const volume = store.get(volumeAtom);
-    const favoriteIds = store.get(favoriteTrackIdsAtom);
+    const favoriteIds = store.get(
+      isDeezer(track) ? deezerFavoriteTrackIdsAtom : favoriteTrackIdsAtom,
+    );
     const source =
       store.get(contextSourceAtom) || store.get(playbackSourceAtom);
 
@@ -128,6 +133,7 @@ export function useMiniplayerEmitter() {
       repeatAtom,
       volumeAtom,
       favoriteTrackIdsAtom,
+      deezerFavoriteTrackIdsAtom,
       playbackSourceAtom,
       contextSourceAtom,
       bitPerfectAtom,
@@ -197,6 +203,7 @@ export function useMiniplayerEmitter() {
     navigateToPlaylist,
     navigateToMix,
     navigateToFavorites,
+    navigateTo,
   } = useNavigation();
   const { showToast } = useToast();
 
@@ -228,9 +235,13 @@ export function useMiniplayerEmitter() {
           case "toggle-favorite": {
             const track = store.get(currentTrackAtom);
             if (!track) break;
-            const favIds = store.get(favoriteTrackIdsAtom);
+            const favIds = store.get(
+              isDeezer(track)
+                ? deezerFavoriteTrackIdsAtom
+                : favoriteTrackIdsAtom,
+            );
             if (favIds.has(track.id)) {
-              await removeFavoriteTrack(track.id);
+              await removeFavoriteTrack(track.id, track);
             } else {
               await addFavoriteTrack(track.id, track);
             }
@@ -258,11 +269,15 @@ export function useMiniplayerEmitter() {
             const t = store.get(currentTrackAtom);
             await focusMainWindow();
             if (t?.album?.id) {
-              navigateToAlbum(t.album.id, {
-                title: t.album.title,
-                cover: t.album.cover,
-                artistName: t.artist?.name,
-              });
+              navigateToAlbum(
+                t.album.id,
+                {
+                  title: t.album.title,
+                  cover: t.album.cover,
+                  artistName: t.artist?.name,
+                },
+                t.provider,
+              );
             }
             break;
           }
@@ -275,7 +290,11 @@ export function useMiniplayerEmitter() {
             const t = store.get(currentTrackAtom);
             if (t?.artist) {
               await focusMainWindow();
-              navigateToArtist(t.artist.id, { name: t.artist.name });
+              navigateToArtist(
+                t.artist.id,
+                { name: t.artist.name },
+                t.provider,
+              );
             }
             break;
           }
@@ -325,7 +344,14 @@ export function useMiniplayerEmitter() {
                   mixType: "TRACK_MIX",
                 });
                 break;
-              // Non-navigable sources (e.g. "playlist-recs"): no focus, no nav.
+              default: {
+                const view = deezerViewForSource(src);
+                if (view) {
+                  await focusMainWindow();
+                  navigateTo(view);
+                }
+              }
+              // Non-navigable sources (e.g. "search"): no focus, no nav.
             }
             break;
           }
@@ -334,7 +360,9 @@ export function useMiniplayerEmitter() {
             if (shareTrack) {
               try {
                 await navigator.clipboard.writeText(
-                  getTrackShareUrl(shareTrack.id),
+                  isDeezer(shareTrack)
+                    ? getDeezerShareUrl("track", shareTrack.id)
+                    : getTrackShareUrl(shareTrack.id),
                 );
                 showToast("Copied share link to clipboard");
               } catch {
@@ -371,6 +399,7 @@ export function useMiniplayerEmitter() {
     navigateToPlaylist,
     navigateToMix,
     navigateToFavorites,
+    navigateTo,
     showToast,
   ]);
 

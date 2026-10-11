@@ -4,6 +4,7 @@ import { usePlaybackActions } from "../hooks/usePlaybackActions";
 import { useNavigation } from "../hooks/useNavigation";
 import { useAtomValue } from "jotai";
 import { currentViewAtom } from "../atoms/navigation";
+import { isAuthenticatedAtom } from "../atoms/auth";
 import { getSuggestions } from "../api/tidal";
 import {
   getTidalImageUrl,
@@ -62,6 +63,9 @@ export default function SearchBar() {
     navigateToPlaylist,
   } = useNavigation();
   const currentView = useAtomValue(currentViewAtom);
+  // Quick suggestions come from TIDAL; a Deezer-only session searches on
+  // Enter instead of firing requests TIDAL would refuse.
+  const tidalSignedIn = useAtomValue(isAuthenticatedAtom);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -102,7 +106,7 @@ export default function SearchBar() {
   const doQuickSearch = useCallback(
     (query: string) => {
       clearTimeout(debounceRef.current);
-      if (!query.trim()) {
+      if (!query.trim() || !tidalSignedIn) {
         setTextSuggestions([]);
         setDirectHits([]);
         setSearching(false);
@@ -124,7 +128,7 @@ export default function SearchBar() {
           });
       }, 300); // Increased debounce to 300ms
     },
-    [getSuggestions],
+    [tidalSignedIn],
   );
 
   const addToHistory = useCallback((query: string) => {

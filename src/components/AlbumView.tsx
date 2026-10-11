@@ -13,6 +13,8 @@ import { usePlaySource } from "../hooks/usePlaySource";
 import { useFavorites } from "../hooks/useFavorites";
 import { useNavigation } from "../hooks/useNavigation";
 import { getAlbumPage } from "../api/tidal";
+import { deezerGetAlbum } from "../api/deezer";
+import { getDeezerShareUrl } from "../lib/deezerSources";
 import { getApiStatus, safeErrorMessage } from "../lib/errorUtils";
 import type { PlayableSource } from "../lib/trackSources";
 import NotFoundPage from "./NotFoundPage";
@@ -20,6 +22,7 @@ import {
   type Track,
   type AlbumPageResponse,
   type MediaItemType,
+  type Provider,
 } from "../types";
 import TidalVideoCover from "./TidalVideoCover";
 import CoverBanner from "./CoverBanner";
@@ -44,7 +47,25 @@ import {
 interface AlbumViewProps {
   albumId: number;
   albumInfo?: { title: string; cover?: string; artistName?: string };
+  /** "deezer" loads the album from Deezer and hides TIDAL-only actions. */
+  provider?: Provider;
   onBack: () => void;
+}
+
+/** Deezer has no album page (credits, review, related rows): wrap the plain
+ *  album + tracks into the same shape so the rest of the view is shared. */
+async function loadDeezerAlbumPage(
+  albumId: number,
+): Promise<AlbumPageResponse> {
+  const { album, tracks } = await deezerGetAlbum(albumId);
+  return {
+    album,
+    tracks,
+    totalTracks: tracks.length,
+    copyright: album.copyright,
+    credits: [],
+    sections: [],
+  };
 }
 
 function formatReleaseDateLong(dateStr: string): string {
@@ -65,8 +86,10 @@ function formatReleaseDateLong(dateStr: string): string {
 export default function AlbumView({
   albumId,
   albumInfo,
+  provider,
   onBack,
 }: AlbumViewProps) {
+  const deezer = provider === "deezer";
   const playSource = usePlaySource();
   const {
     favoriteAlbumIds,
@@ -97,7 +120,7 @@ export default function AlbumView({
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
-  const albumFavorited = favoriteAlbumIds.has(albumId);
+  const albumFavorited = !deezer && favoriteAlbumIds.has(albumId);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,7 +131,9 @@ export default function AlbumView({
       setNotFound(false);
 
       try {
-        const { page } = await getAlbumPage(albumId);
+        const page = deezer
+          ? await loadDeezerAlbumPage(albumId)
+          : (await getAlbumPage(albumId)).page;
         if (!cancelled) {
           setPageData(page);
         }
@@ -132,7 +157,7 @@ export default function AlbumView({
     return () => {
       cancelled = true;
     };
-  }, [albumId]);
+  }, [albumId, deezer]);
 
   const album = pageData?.album ?? null;
   const tracks = pageData?.tracks ?? [];
@@ -157,7 +182,7 @@ export default function AlbumView({
 
   const albumPlayable = (): PlayableSource => ({
     meta: {
-      type: "album",
+      type: deezer ? "deezer-album" : "album",
       id: albumId,
       name: album?.title || albumInfo?.title || "Album",
     },
@@ -227,7 +252,11 @@ export default function AlbumView({
 
   const handleShare = async () => {
     try {
-      await navigator.clipboard.writeText(getShareUrl(albumMediaItem));
+      await navigator.clipboard.writeText(
+        deezer
+          ? getDeezerShareUrl("album", albumId)
+          : getShareUrl(albumMediaItem),
+      );
       showToast("Copied share link to clipboard");
     } catch {
       showToast("Failed to copy link", "error");
@@ -392,6 +421,7 @@ export default function AlbumView({
                   <TrackArtists
                     artists={album?.artists}
                     artist={album?.artist}
+                    provider={provider}
                     className="hover:underline cursor-pointer"
                     fallback={albumInfo?.artistName || "Unknown Artist"}
                   />
@@ -432,7 +462,7 @@ export default function AlbumView({
           <div className="px-8 py-5 flex items-center justify-between relative z-10">
             <div className="flex items-center gap-3">
               <SourcePlayButton
-                sourceType="album"
+                sourceType={deezer ? "deezer-album" : "album"}
                 sourceId={albumId}
                 onPlay={handlePlayAll}
               />
@@ -445,34 +475,38 @@ export default function AlbumView({
               </button>
             </div>
             <div className="flex items-end gap-6 relative">
-              <button
-                onClick={handleToggleFavorite}
-                disabled={favoritePending}
-                className={`flex flex-col items-center gap-1.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
-                  albumFavorited
-                    ? "text-th-accent hover:brightness-110"
-                    : "text-th-text-muted hover:text-th-text-primary"
-                }`}
-                title={
-                  albumFavorited ? "Remove from favorites" : "Add to favorites"
-                }
-                aria-label={
-                  albumFavorited ? "Unfavorite album" : "Favorite album"
-                }
-              >
-                {favoritePending ? (
-                  <Loader2 size={22} className="animate-spin" />
-                ) : (
-                  <Heart
-                    size={22}
-                    fill={albumFavorited ? "currentColor" : "none"}
-                    strokeWidth={albumFavorited ? 0 : 2}
-                  />
-                )}
-                <span className="text-[11px] font-medium">
-                  {albumFavorited ? "Added" : "Add"}
-                </span>
-              </button>
+              {!deezer && (
+                <button
+                  onClick={handleToggleFavorite}
+                  disabled={favoritePending}
+                  className={`flex flex-col items-center gap-1.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                    albumFavorited
+                      ? "text-th-accent hover:brightness-110"
+                      : "text-th-text-muted hover:text-th-text-primary"
+                  }`}
+                  title={
+                    albumFavorited
+                      ? "Remove from favorites"
+                      : "Add to favorites"
+                  }
+                  aria-label={
+                    albumFavorited ? "Unfavorite album" : "Favorite album"
+                  }
+                >
+                  {favoritePending ? (
+                    <Loader2 size={22} className="animate-spin" />
+                  ) : (
+                    <Heart
+                      size={22}
+                      fill={albumFavorited ? "currentColor" : "none"}
+                      strokeWidth={albumFavorited ? 0 : 2}
+                    />
+                  )}
+                  <span className="text-[11px] font-medium">
+                    {albumFavorited ? "Added" : "Add"}
+                  </span>
+                </button>
+              )}
 
               <button
                 onClick={handleShare}
@@ -484,18 +518,20 @@ export default function AlbumView({
                 <span className="text-[11px] font-medium">Share</span>
               </button>
 
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setContextMenu({ x: e.clientX, y: e.clientY });
-                }}
-                className="flex flex-col items-center gap-1.5 text-th-text-muted hover:text-th-text-primary transition-colors"
-                title="More options"
-                aria-label="More options"
-              >
-                <MoreHorizontal size={22} />
-                <span className="text-[11px] font-medium">More</span>
-              </button>
+              {!deezer && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setContextMenu({ x: e.clientX, y: e.clientY });
+                  }}
+                  className="flex flex-col items-center gap-1.5 text-th-text-muted hover:text-th-text-primary transition-colors"
+                  title="More options"
+                  aria-label="More options"
+                >
+                  <MoreHorizontal size={22} />
+                  <span className="text-[11px] font-medium">More</span>
+                </button>
+              )}
 
               {contextMenu && (
                 <MediaContextMenu

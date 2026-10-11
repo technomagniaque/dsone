@@ -16,6 +16,7 @@ import {
 import { currentVideoAtom } from "../atoms/video";
 import { PROXY_SAVED_EVENT } from "../atoms/proxy";
 import type { Track, StreamInfo } from "../types";
+import { isSameTrack, nextTrackCommandFor } from "../lib/provider";
 
 export type PendingNext = {
   trackId: number;
@@ -85,7 +86,7 @@ export function useGaplessPrefetch(
     // - trackId changed → invoke as usual (new track to preroll).
     if (
       pendingNextRef.current &&
-      pendingNextRef.current.trackId === next.id &&
+      isSameTrack(pendingNextRef.current.track, next) &&
       pendingNextRef.current.qid === qid
     ) {
       return;
@@ -111,7 +112,9 @@ export function useGaplessPrefetch(
     }
     inFlightRef.current = true;
     try {
-      const info = await invoke<StreamInfo>("set_next_track", {
+      // Deezer tracks are armed through their own command, which resolves
+      // the decrypting loopback URL instead of a TIDAL manifest.
+      const info = await invoke<StreamInfo>(nextTrackCommandFor(next), {
         trackId: next.id,
         qid,
         useTrackGain: store.get(useTrackGainAtom),

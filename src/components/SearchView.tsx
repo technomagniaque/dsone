@@ -6,6 +6,12 @@ import { useNavigation } from "../hooks/useNavigation";
 import { useFavorites } from "../hooks/useFavorites";
 import { useViewTab } from "../hooks/useViewTab";
 import { searchTidal } from "../api/tidal";
+import { deezerSearch } from "../api/deezer";
+import { useAtom, useAtomValue } from "jotai";
+import { isAuthenticatedAtom } from "../atoms/auth";
+import { deezerUserAtom, searchProviderAtom } from "../atoms/deezer";
+import { useDeezerMediaPlay } from "../hooks/useDeezerMediaPlay";
+import { resolveSearchProvider } from "../lib/provider";
 import {
   getTidalImageUrl,
   getTrackDisplayTitle,
@@ -17,6 +23,7 @@ import {
   type Playlist,
   type DirectHitItem,
   type MediaItemType,
+  type Provider,
 } from "../types";
 import {
   videoToTrack,
@@ -49,22 +56,76 @@ const TABS: { id: SearchTab; label: string }[] = [
 ];
 
 const TAB_IDS: readonly SearchTab[] = TABS.map((t) => t.id);
+// Deezer search has no "top hits" ranking and no videos.
+const DEEZER_TABS = TABS.filter((t) => t.id !== "tophits" && t.id !== "videos");
 
 interface SearchViewProps {
   query: string;
   initialTab?: SearchTab;
+  /** Source to search; omitted = the user's last pick, else TIDAL when signed
+   *  in, else Deezer. */
+  provider?: Provider;
   onBack: () => void;
 }
 
 export default function SearchView({
   query,
   initialTab,
+  provider: requestedProvider,
   onBack,
 }: SearchViewProps) {
   const { playSingle, playFromSource } = usePlaybackActions();
-  const playMedia = useMediaPlay();
-  const { navigateToAlbum, navigateToPlaylist, navigateToArtist } =
-    useNavigation();
+  const playTidalMedia = useMediaPlay();
+  const playDeezerMedia = useDeezerMediaPlay();
+  const {
+    navigateToAlbum: navAlbum,
+    navigateToPlaylist: navPlaylist,
+    navigateToArtist: navArtist,
+    navigateToSearch,
+  } = useNavigation();
+  const tidalSignedIn = useAtomValue(isAuthenticatedAtom);
+  const deezerSignedIn = !!useAtomValue(deezerUserAtom);
+  const [preferredProvider, setPreferredProvider] = useAtom(searchProviderAtom);
+  const provider = resolveSearchProvider(
+    requestedProvider ?? preferredProvider,
+    tidalSignedIn,
+    deezerSignedIn,
+  );
+  const deezer = provider === "deezer";
+  const showSourceSwitch = tidalSignedIn && deezerSignedIn;
+  const tabs = deezer ? DEEZER_TABS : TABS;
+  const switchProvider = (next: Provider) => {
+    if (next === provider) return;
+    setPreferredProvider(next);
+    navigateToSearch(query, next);
+  };
+
+  // Every link and play button below goes through these, so a Deezer result
+  // opens the Deezer page and plays from Deezer.
+  const navProvider = deezer ? ("deezer" as const) : undefined;
+  const navigateToAlbum = (
+    id: number,
+    info?: { title: string; cover?: string; artistName?: string },
+  ) => navAlbum(id, info, navProvider);
+  const navigateToPlaylist = (
+    id: string,
+    info?: Parameters<typeof navPlaylist>[1],
+  ) => navPlaylist(id, info, navProvider);
+  const navigateToArtist = (
+    id: number,
+    info?: { name: string; picture?: string },
+  ) => navArtist(id, info, navProvider);
+  const playMedia = (item: MediaItemType) => {
+    if (!deezer) return playTidalMedia(item);
+    switch (item.type) {
+      case "album":
+        return playDeezerMedia("album", item.id, item.title, item.cover);
+      case "playlist":
+        return playDeezerMedia("playlist", item.uuid, item.title, item.image);
+      case "artist":
+        return playDeezerMedia("artist", item.id, item.name, item.picture);
+    }
+  };
 
   const {
     favoriteAlbumIds,
@@ -82,7 +143,9 @@ export default function SearchView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useViewTab<SearchTab>(
-    initialTab ?? "all",
+    deezer && (initialTab === "tophits" || initialTab === "videos")
+      ? "all"
+      : (initialTab ?? "all"),
     TAB_IDS,
   );
 
@@ -156,7 +219,7 @@ export default function SearchView({
     setLoading(true);
     setError(null);
 
-    searchTidal(query.trim(), 50)
+    (deezer ? deezerSearch(query.trim(), 50) : searchTidal(query.trim(), 50))
       .then((r) => {
         if (active) setResults(r);
       })
@@ -170,7 +233,7 @@ export default function SearchView({
     return () => {
       active = false;
     };
-  }, [query]);
+  }, [query, deezer]);
 
   const handlePlayTrack = (track: Track, _index: number) => {
     const allTracks = results?.tracks || [];
@@ -222,11 +285,15 @@ export default function SearchView({
           handlePlayVideo(video);
         }}
         isFavorited={isFav}
-        onFavoriteToggle={(e) => {
-          e.stopPropagation();
-          if (isFav) removeFavoriteVideo(video.id);
-          else addFavoriteVideo(video.id);
-        }}
+        onFavoriteToggle={
+          deezer
+            ? undefined
+            : (e) => {
+                e.stopPropagation();
+                if (isFav) removeFavoriteVideo(video.id);
+                else addFavoriteVideo(video.id);
+              }
+        }
       />
     );
   };
@@ -268,7 +335,30 @@ export default function SearchView({
       <PageContainer className="px-6 py-6">
         {/* Tab bar */}
         <div className="pb-6 flex items-center gap-2">
-          {TABS.map((tab) => (
+          {showSourceSwitch && (
+            <div
+              role="radiogroup"
+              aria-label="Search source"
+              className="mr-3 flex items-center bg-th-hl-med rounded-full p-0.5"
+            >
+              {(["tidal", "deezer"] as const).map((p) => (
+                <button
+                  key={p}
+                  role="radio"
+                  aria-checked={provider === p}
+                  onClick={() => switchProvider(p)}
+                  className={`px-3.5 py-1 rounded-full text-[12px] font-bold transition-colors ${
+                    provider === p
+                      ? "bg-th-accent text-th-on-accent"
+                      : "text-th-text-secondary hover:text-th-text-primary"
+                  }`}
+                >
+                  {p === "tidal" ? "TIDAL" : "Deezer"}
+                </button>
+              ))}
+            </div>
+          )}
+          {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
@@ -368,8 +458,10 @@ export default function SearchView({
                               numberOfTracks: pl.numberOfTracks,
                             })
                           }
-                          onContextMenu={(e) =>
-                            handlePlaylistContextMenu(e, pl)
+                          onContextMenu={
+                            deezer
+                              ? undefined
+                              : (e) => handlePlaylistContextMenu(e, pl)
                           }
                           onPlay={(e) => {
                             e.stopPropagation();
@@ -380,13 +472,19 @@ export default function SearchView({
                               image: pl.image,
                             });
                           }}
-                          isFavorited={favoritePlaylistUuids.has(pl.uuid)}
-                          onFavoriteToggle={(e) => {
-                            e.stopPropagation();
-                            if (favoritePlaylistUuids.has(pl.uuid))
-                              removeFavoritePlaylist(pl.uuid);
-                            else addFavoritePlaylist(pl.uuid, pl);
-                          }}
+                          isFavorited={
+                            !deezer && favoritePlaylistUuids.has(pl.uuid)
+                          }
+                          onFavoriteToggle={
+                            deezer
+                              ? undefined
+                              : (e) => {
+                                  e.stopPropagation();
+                                  if (favoritePlaylistUuids.has(pl.uuid))
+                                    removeFavoritePlaylist(pl.uuid);
+                                  else addFavoritePlaylist(pl.uuid, pl);
+                                }
+                          }
                         />
                       ))}
                     </div>
@@ -417,8 +515,10 @@ export default function SearchView({
                               artistName: album.artist?.name,
                             })
                           }
-                          onContextMenu={(e) =>
-                            handleAlbumContextMenu(e, album)
+                          onContextMenu={
+                            deezer
+                              ? undefined
+                              : (e) => handleAlbumContextMenu(e, album)
                           }
                           onPlay={(e) => {
                             e.stopPropagation();
@@ -429,13 +529,19 @@ export default function SearchView({
                               cover: album.cover,
                             });
                           }}
-                          isFavorited={favoriteAlbumIds.has(album.id)}
-                          onFavoriteToggle={(e) => {
-                            e.stopPropagation();
-                            if (favoriteAlbumIds.has(album.id))
-                              removeFavoriteAlbum(album.id);
-                            else addFavoriteAlbum(album.id, album);
-                          }}
+                          isFavorited={
+                            !deezer && favoriteAlbumIds.has(album.id)
+                          }
+                          onFavoriteToggle={
+                            deezer
+                              ? undefined
+                              : (e) => {
+                                  e.stopPropagation();
+                                  if (favoriteAlbumIds.has(album.id))
+                                    removeFavoriteAlbum(album.id);
+                                  else addFavoriteAlbum(album.id, album);
+                                }
+                          }
                         />
                       ))}
                     </div>
@@ -465,8 +571,10 @@ export default function SearchView({
                               picture: artist.picture,
                             })
                           }
-                          onContextMenu={(e) =>
-                            handleArtistContextMenu(e, artist)
+                          onContextMenu={
+                            deezer
+                              ? undefined
+                              : (e) => handleArtistContextMenu(e, artist)
                           }
                           onPlay={(e) => {
                             e.stopPropagation();
@@ -569,7 +677,11 @@ export default function SearchView({
                         numberOfTracks: pl.numberOfTracks,
                       })
                     }
-                    onContextMenu={(e) => handlePlaylistContextMenu(e, pl)}
+                    onContextMenu={
+                      deezer
+                        ? undefined
+                        : (e) => handlePlaylistContextMenu(e, pl)
+                    }
                     onPlay={(e) => {
                       e.stopPropagation();
                       playMedia({
@@ -579,13 +691,17 @@ export default function SearchView({
                         image: pl.image,
                       });
                     }}
-                    isFavorited={favoritePlaylistUuids.has(pl.uuid)}
-                    onFavoriteToggle={(e) => {
-                      e.stopPropagation();
-                      if (favoritePlaylistUuids.has(pl.uuid))
-                        removeFavoritePlaylist(pl.uuid);
-                      else addFavoritePlaylist(pl.uuid, pl);
-                    }}
+                    isFavorited={!deezer && favoritePlaylistUuids.has(pl.uuid)}
+                    onFavoriteToggle={
+                      deezer
+                        ? undefined
+                        : (e) => {
+                            e.stopPropagation();
+                            if (favoritePlaylistUuids.has(pl.uuid))
+                              removeFavoritePlaylist(pl.uuid);
+                            else addFavoritePlaylist(pl.uuid, pl);
+                          }
+                    }
                   />
                 ))}
               </div>
@@ -605,7 +721,11 @@ export default function SearchView({
                         artistName: album.artist?.name,
                       })
                     }
-                    onContextMenu={(e) => handleAlbumContextMenu(e, album)}
+                    onContextMenu={
+                      deezer
+                        ? undefined
+                        : (e) => handleAlbumContextMenu(e, album)
+                    }
                     onPlay={(e) => {
                       e.stopPropagation();
                       playMedia({
@@ -615,13 +735,17 @@ export default function SearchView({
                         cover: album.cover,
                       });
                     }}
-                    isFavorited={favoriteAlbumIds.has(album.id)}
-                    onFavoriteToggle={(e) => {
-                      e.stopPropagation();
-                      if (favoriteAlbumIds.has(album.id))
-                        removeFavoriteAlbum(album.id);
-                      else addFavoriteAlbum(album.id, album);
-                    }}
+                    isFavorited={!deezer && favoriteAlbumIds.has(album.id)}
+                    onFavoriteToggle={
+                      deezer
+                        ? undefined
+                        : (e) => {
+                            e.stopPropagation();
+                            if (favoriteAlbumIds.has(album.id))
+                              removeFavoriteAlbum(album.id);
+                            else addFavoriteAlbum(album.id, album);
+                          }
+                    }
                   />
                 ))}
               </div>
@@ -640,7 +764,11 @@ export default function SearchView({
                         picture: artist.picture,
                       })
                     }
-                    onContextMenu={(e) => handleArtistContextMenu(e, artist)}
+                    onContextMenu={
+                      deezer
+                        ? undefined
+                        : (e) => handleArtistContextMenu(e, artist)
+                    }
                     onPlay={(e) => {
                       e.stopPropagation();
                       playMedia({
@@ -853,7 +981,10 @@ function TopHitsList({
                 title="More options"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onMediaContextMenu(videoMedia, { x: e.clientX, y: e.clientY });
+                  onMediaContextMenu(videoMedia, {
+                    x: e.clientX,
+                    y: e.clientY,
+                  });
                 }}
               >
                 <MoreHorizontal size={16} />

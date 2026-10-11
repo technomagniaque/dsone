@@ -40,6 +40,7 @@ import {
   videoExpandedAtom,
 } from "../atoms/video";
 import { getMixItems, checkNetworkError } from "../api/tidal";
+import { isDeezer, playCommandFor } from "../lib/provider";
 import { useToast } from "../contexts/ToastContext";
 import { stampQid, stampQids, ensureQid } from "../lib/qid";
 import {
@@ -114,6 +115,9 @@ function buildTrackStartedPayload(
   chosenByUser: boolean,
   source: PlaybackSource | null,
 ) {
+  // TIDAL play reporting keys off trackId/source: a Deezer play must not be
+  // reported to TIDAL under a Deezer id. Scrobblers still get the metadata.
+  const deezer = isDeezer(track);
   return {
     artist: getTrackArtistDisplay(track),
     artistPrimary: getTrackPrimaryArtist(track),
@@ -124,10 +128,10 @@ function buildTrackStartedPayload(
     trackNumber: track.trackNumber || null,
     chosenByUser,
     isrc: track.isrc || null,
-    trackId: track.id || null,
+    trackId: deezer ? null : track.id || null,
     // Container the play started from, for TIDAL play-reporting attribution.
-    sourceType: source?.type ?? null,
-    sourceId: source != null ? String(source.id) : null,
+    sourceType: deezer ? null : (source?.type ?? null),
+    sourceId: deezer || source == null ? null : String(source.id),
   };
 }
 
@@ -179,18 +183,20 @@ const DEVICE_MAX_RETRIES = 10;
 const MAX_HISTORY_TRACKS = 500;
 const PLAY_REENTRY_GUARD_MS = 250;
 
-/** Invoke play_tidal_track with automatic device-busy retry.
+/** Start `track` on the backend of the service it comes from
+ *  (play_tidal_track / play_deezer_track) with automatic device-busy retry.
  *  When PipeWire holds the ALSA device after pipeline teardown, this retries
  *  with 500ms delays (up to 5s) while keeping the UI responsive. */
 async function invokePlayWithRetry(
-  trackId: number,
+  track: Pick<Track, "id" | "provider">,
   useTrackGain: boolean,
   onFirstRetry: () => void,
 ): Promise<StreamInfo> {
+  const command = playCommandFor(track);
   for (let attempt = 0; attempt <= DEVICE_MAX_RETRIES; attempt++) {
     try {
-      return await invoke<StreamInfo>("play_tidal_track", {
-        trackId,
+      return await invoke<StreamInfo>(command, {
+        trackId: track.id,
         useTrackGain,
       });
     } catch (err: unknown) {
@@ -341,7 +347,7 @@ export function usePlaybackActions() {
 
       try {
         const info = await invokePlayWithRetry(
-          stamped.id,
+          stamped,
           store.get(useTrackGainAtom),
           () => {
             store.set(isPlayingAtom, false);
@@ -467,7 +473,7 @@ export function usePlaybackActions() {
         // doesn't show the stale end position during the reload.
         markPlaybackLoading(true);
         const info = await invokePlayWithRetry(
-          track.id,
+          track,
           store.get(useTrackGainAtom),
           () => {
             store.set(isPlayingAtom, false);
@@ -919,7 +925,7 @@ export function usePlaybackActions() {
             markPlaybackLoading(true);
             try {
               const info = await invokePlayWithRetry(
-                current.id,
+                current,
                 store.get(useTrackGainAtom),
                 () => {
                   store.set(isPlayingAtom, false);
@@ -1192,7 +1198,8 @@ export function usePlaybackActions() {
           }
         } else if (store.get(autoplayAtom)) {
           const current = store.get(currentTrackAtom);
-          if (current) {
+          // Track radio is a TIDAL mix; a Deezer track has none to follow.
+          if (current && !isDeezer(current)) {
             try {
               const historyIds = new Set(
                 store.get(historyAtom).map((t) => t.id),
@@ -1345,7 +1352,7 @@ export function usePlaybackActions() {
           preloadImage(getTidalImageUrl(prevTrack.album?.cover, 640));
           preloadImage(getTidalImageUrl(prevTrack.album?.cover, 1280));
           const info = await invokePlayWithRetry(
-            prevTrack.id,
+            prevTrack,
             store.get(useTrackGainAtom),
             () => {
               store.set(isPlayingAtom, false);
@@ -1485,7 +1492,7 @@ export function usePlaybackActions() {
 
             try {
               const info = await invokePlayWithRetry(
-                prevTrack.id,
+                prevTrack,
                 store.get(useTrackGainAtom),
                 () => {
                   store.set(isPlayingAtom, false);

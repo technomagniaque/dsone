@@ -18,6 +18,9 @@ import ExplicitBadge from "./ExplicitBadge";
 import AiBadge from "./AiBadge";
 import { formatTime } from "../lib/format";
 import { isNavigableSource } from "../lib/playbackSource";
+import { deezerViewForSource } from "../lib/deezerSources";
+import { isDeezer } from "../lib/provider";
+import { deezerFavoriteTrackIdsAtom } from "../atoms/deezer";
 import { getTrackArtistDisplay } from "../utils/itemHelpers";
 import TidalImage from "./TidalImage";
 import { useCallback, useRef, useState, useEffect, memo } from "react";
@@ -74,8 +77,7 @@ const TrackInfoSection = memo(function TrackInfoSection() {
   // `currentTrack` with no session is a restored/queued video (the session
   // atom isn't persisted) — show it as a video and (re)start it on click.
   const videoItem =
-    currentVideo ??
-    (currentTrack?.itemType === "video" ? currentTrack : null);
+    currentVideo ?? (currentTrack?.itemType === "video" ? currentTrack : null);
   if (videoItem) {
     // artists[] first: videoToTrack always backfills the singular `artist` from
     // artists[0], so preferring it would collapse a multi-artist video to one
@@ -134,7 +136,12 @@ const TrackInfoSection = memo(function TrackInfoSection() {
         <div className="flex items-center gap-1.5 min-w-0">
           <span
             onClick={() =>
-              currentTrack.album?.id && navigateToAlbum(currentTrack.album.id)
+              currentTrack.album?.id &&
+              navigateToAlbum(
+                currentTrack.album.id,
+                undefined,
+                currentTrack.provider,
+              )
             }
             className="text-th-text-primary text-[13px] font-semibold truncate hover:underline cursor-pointer leading-tight"
           >
@@ -147,6 +154,7 @@ const TrackInfoSection = memo(function TrackInfoSection() {
           <TrackArtists
             artists={currentTrack.artists}
             artist={currentTrack.artist}
+            provider={currentTrack.provider}
             className="hover:text-th-text-primary hover:underline cursor-pointer transition-colors duration-200"
           />
         </span>
@@ -161,6 +169,7 @@ const TrackInfoSection = memo(function TrackInfoSection() {
 const FavoriteButton = memo(function FavoriteButton() {
   const currentTrack = useAtomValue(currentTrackAtom);
   const favoriteTrackIds = useAtomValue(favoriteTrackIdsAtom);
+  const deezerFavoriteTrackIds = useAtomValue(deezerFavoriteTrackIdsAtom);
   const favoriteVideoIds = useAtomValue(favoriteVideoIdsAtom);
   const {
     addFavoriteTrack,
@@ -171,7 +180,12 @@ const FavoriteButton = memo(function FavoriteButton() {
 
   const isVideo = currentTrack?.itemType === "video";
   const isLiked = currentTrack
-    ? (isVideo ? favoriteVideoIds : favoriteTrackIds).has(currentTrack.id)
+    ? (isVideo
+        ? favoriteVideoIds
+        : isDeezer(currentTrack)
+          ? deezerFavoriteTrackIds
+          : favoriteTrackIds
+      ).has(currentTrack.id)
     : false;
 
   const toggleLike = useCallback(async () => {
@@ -183,7 +197,7 @@ const FavoriteButton = memo(function FavoriteButton() {
         if (isLiked) await removeFavoriteVideo(currentTrack.id);
         else await addFavoriteVideo(currentTrack.id);
       } else if (isLiked) {
-        await removeFavoriteTrack(currentTrack.id);
+        await removeFavoriteTrack(currentTrack.id, currentTrack);
       } else {
         await addFavoriteTrack(currentTrack.id, currentTrack);
       }
@@ -262,6 +276,7 @@ export const PlayingFromLabel = memo(function PlayingFromLabel() {
     navigateToArtist,
     navigateToArtistTracks,
     navigateToFavorites,
+    navigateTo,
   } = useNavigation();
 
   const navigateToSource = useCallback(() => {
@@ -306,8 +321,13 @@ export const PlayingFromLabel = memo(function PlayingFromLabel() {
           mixType: "TRACK_MIX",
         });
         break;
+      default: {
+        const view = deezerViewForSource(source);
+        if (view) navigateTo(view);
+      }
     }
   }, [
+    navigateTo,
     source,
     navigateToAlbum,
     navigateToPlaylist,
@@ -374,7 +394,10 @@ const VideoProgressScrubber = memo(function VideoProgressScrubber() {
       const v = videoElementRef.current;
       if (!track || !v || !duration) return;
       const rect = track.getBoundingClientRect();
-      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      const ratio = Math.min(
+        1,
+        Math.max(0, (clientX - rect.left) / rect.width),
+      );
       const target = ratio * duration;
       setPosition(target);
       v.currentTime = target;

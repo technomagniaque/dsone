@@ -26,6 +26,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAtomValue, atom } from "jotai";
 import { currentTrackAtom, isPlayingAtom } from "../atoms/playback";
 import { favoriteTrackIdsAtom, favoriteVideoIdsAtom } from "../atoms/favorites";
+import { deezerFavoriteTrackIdsAtom } from "../atoms/deezer";
+import { isDeezer, isSameTrack } from "../lib/provider";
 import { useNavigation } from "../hooks/useNavigation";
 import { useFavorites } from "../hooks/useFavorites";
 import { useToast } from "../contexts/ToastContext";
@@ -124,8 +126,10 @@ const TrackRow = memo(function TrackRow({
   onAddToCurrentPlaylist,
 }: TrackRowProps) {
   const favoriteTrackIds = useAtomValue(favoriteTrackIdsAtom);
+  const deezerFavoriteTrackIds = useAtomValue(deezerFavoriteTrackIdsAtom);
   const favoriteVideoIds = useAtomValue(favoriteVideoIdsAtom);
   const { navigateToAlbum } = useNavigation();
+  const deezer = isDeezer(track);
   const {
     addFavoriteTrack,
     removeFavoriteTrack,
@@ -147,9 +151,17 @@ const TrackRow = memo(function TrackRow({
   const contentPrefs = useContentPrefs();
   const isBlocked = isContentBlocked(track, contentPrefs);
 
+  const trackId = track.id;
+  const trackProvider = track.provider;
   const isActiveAtom = useMemo(
-    () => atom((get) => (get(currentTrackAtom)?.id ?? null) === track.id),
-    [track.id],
+    () =>
+      atom((get) =>
+        isSameTrack(get(currentTrackAtom), {
+          id: trackId,
+          provider: trackProvider,
+        }),
+      ),
+    [trackId, trackProvider],
   );
   const isActive = useAtomValue(isActiveAtom);
 
@@ -157,10 +169,12 @@ const TrackRow = memo(function TrackRow({
     () =>
       atom(
         (get) =>
-          (get(currentTrackAtom)?.id ?? null) === track.id &&
-          get(isPlayingAtom),
+          isSameTrack(get(currentTrackAtom), {
+            id: trackId,
+            provider: trackProvider,
+          }) && get(isPlayingAtom),
       ),
-    [track.id],
+    [trackId, trackProvider],
   );
   const playing = useAtomValue(isPlayingHereAtom);
 
@@ -172,7 +186,7 @@ const TrackRow = memo(function TrackRow({
 
   const isFav = isVideo
     ? favoriteVideoIds.has(track.id)
-    : favoriteTrackIds.has(track.id);
+    : (deezer ? deezerFavoriteTrackIds : favoriteTrackIds).has(track.id);
 
   const toggleFavorite = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -184,7 +198,7 @@ const TrackRow = memo(function TrackRow({
           await addFavoriteVideo(track.id);
         }
       } else if (isFav) {
-        await removeFavoriteTrack(track.id);
+        await removeFavoriteTrack(track.id, track);
       } else {
         await addFavoriteTrack(track.id, track);
       }
@@ -309,6 +323,7 @@ const TrackRow = memo(function TrackRow({
               <TrackArtists
                 artists={track.artists}
                 artist={track.artist}
+                provider={track.provider}
                 className="hover:text-th-text-primary hover:underline transition-colors cursor-pointer"
               />
             </span>
@@ -323,6 +338,7 @@ const TrackRow = memo(function TrackRow({
             <TrackArtists
               artists={track.artists}
               artist={track.artist}
+              provider={track.provider}
               className="hover:text-th-text-primary hover:underline transition-colors cursor-pointer"
             />
           </span>
@@ -337,11 +353,15 @@ const TrackRow = memo(function TrackRow({
             onClick={(e) => {
               e.stopPropagation();
               if (track.album?.id) {
-                navigateToAlbum(track.album.id, {
-                  title: track.album.title,
-                  cover: track.album.cover,
-                  artistName: track.artist?.name,
-                });
+                navigateToAlbum(
+                  track.album.id,
+                  {
+                    title: track.album.title,
+                    cover: track.album.cover,
+                    artistName: track.artist?.name,
+                  },
+                  track.provider,
+                );
               }
             }}
           >
@@ -406,12 +426,18 @@ const TrackRow = memo(function TrackRow({
           </button>
         ) : (
           <>
+            {/* TIDAL playlists only take TIDAL tracks; keep the slot so
+                columns stay aligned. */}
             <button
               ref={plusButtonRef}
+              disabled={deezer}
+              aria-hidden={deezer || undefined}
               className={`p-1.5 rounded-full transition-colors ${
-                playlistMenuOpen
-                  ? "text-th-accent"
-                  : "text-th-text-muted hover:text-th-text-primary"
+                deezer
+                  ? "invisible"
+                  : playlistMenuOpen
+                    ? "text-th-accent"
+                    : "text-th-text-muted hover:text-th-text-primary"
               }`}
               title="Add to playlist"
               onClick={handlePlusClick}

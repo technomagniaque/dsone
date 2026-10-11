@@ -16,6 +16,8 @@ import ExplicitBadge from "./ExplicitBadge";
 import AiBadge from "./AiBadge";
 import { parseLrc, type LrcLine } from "../lib/lrc";
 import { isNavigableSource } from "../lib/playbackSource";
+import { deezerViewForSource } from "../lib/deezerSources";
+import { isDeezer } from "../lib/provider";
 import {
   useState,
   useEffect,
@@ -117,9 +119,10 @@ const QueueTab = memo(function QueueTab({
     playFromQueue,
     clearQueue,
   } = usePlaybackActions();
-  const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } =
+  const { isTrackFavorite, addFavoriteTrack, removeFavoriteTrack } =
     useFavorites();
   const {
+    navigateTo,
     navigateToArtist,
     navigateToAlbum,
     navigateToPlaylist,
@@ -170,8 +173,13 @@ const QueueTab = memo(function QueueTab({
           mixType: "TRACK_MIX",
         });
         break;
+      default: {
+        const view = deezerViewForSource(source);
+        if (view) navigateTo(view);
+      }
     }
   }, [
+    navigateTo,
     source,
     navigateToAlbum,
     navigateToPlaylist,
@@ -218,8 +226,13 @@ const QueueTab = memo(function QueueTab({
           mixType: "TRACK_MIX",
         });
         break;
+      default: {
+        const view = deezerViewForSource(s);
+        if (view) navigateTo(view);
+      }
     }
   }, [
+    navigateTo,
     contextQueueSource,
     navigateToAlbum,
     navigateToPlaylist,
@@ -295,11 +308,11 @@ const QueueTab = memo(function QueueTab({
   }, []);
 
   const handleToggleFavorite = useCallback(
-    async (trackId: number, track?: Track) => {
-      const isFav = favoriteTrackIds.has(trackId);
+    async (trackId: number, track: Track) => {
+      const isFav = isTrackFavorite(track);
       try {
         if (isFav) {
-          await removeFavoriteTrack(trackId);
+          await removeFavoriteTrack(trackId, track);
           showToast("Removed from Loved tracks");
         } else {
           await addFavoriteTrack(trackId, track);
@@ -309,16 +322,17 @@ const QueueTab = memo(function QueueTab({
         showToast("Failed to update Loved tracks", "error");
       }
     },
-    [favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack, showToast],
+    [isTrackFavorite, addFavoriteTrack, removeFavoriteTrack, showToast],
   );
 
   const handleArtistClick = useCallback(
-    (artist: ArtistInfo) => {
+    (artist: ArtistInfo, provider?: Track["provider"]) => {
       if (artist.id) {
-        navigateToArtist(artist.id, {
-          name: artist.name,
-          picture: artist.picture,
-        });
+        navigateToArtist(
+          artist.id,
+          { name: artist.name, picture: artist.picture },
+          provider,
+        );
       }
     },
     [navigateToArtist],
@@ -327,11 +341,15 @@ const QueueTab = memo(function QueueTab({
   const handleAlbumClick = useCallback(
     (track: Track) => {
       if (track.album?.id) {
-        navigateToAlbum(track.album.id, {
-          title: track.album.title,
-          cover: track.album.cover,
-          artistName: track.artist?.name,
-        });
+        navigateToAlbum(
+          track.album.id,
+          {
+            title: track.album.title,
+            cover: track.album.cover,
+            artistName: track.artist?.name,
+          },
+          track.provider,
+        );
       }
     },
     [navigateToAlbum],
@@ -340,16 +358,16 @@ const QueueTab = memo(function QueueTab({
   /** Shared props builder for TrackRow to avoid repetition */
   const trackRowNav = useCallback(
     (track: Track) => ({
-      isFav: favoriteTrackIds.has(track.id),
+      isFav: isTrackFavorite(track),
       onToggleFavorite: () => handleToggleFavorite(track.id, track),
       onArtistClick:
         track.artist?.id || track.artists?.[0]?.id
-          ? handleArtistClick
+          ? (artist: ArtistInfo) => handleArtistClick(artist, track.provider)
           : undefined,
       onAlbumClick: track.album?.id ? () => handleAlbumClick(track) : undefined,
     }),
     [
-      favoriteTrackIds,
+      isTrackFavorite,
       handleToggleFavorite,
       handleArtistClick,
       handleAlbumClick,
@@ -1003,6 +1021,12 @@ const LyricsTab = memo(function LyricsTab() {
     activeLineRef.current = -1;
     setUserScrolled(false);
 
+    // Lyrics come from TIDAL; a Deezer id would fetch some other song's.
+    if (isDeezer(currentTrack)) {
+      setLoading(false);
+      return;
+    }
+
     getTrackLyrics(currentTrack.id)
       .then((result) => {
         if (!active) return;
@@ -1208,6 +1232,12 @@ const CreditsTab = memo(function CreditsTab() {
     setCreditsError(null);
     setCredits([]);
 
+    // Credits come from TIDAL; skip them for a Deezer track.
+    if (isDeezer(currentTrack)) {
+      setCreditsLoading(false);
+      return;
+    }
+
     getTrackCredits(currentTrack.id)
       .then((result) => {
         if (active) setCredits(result);
@@ -1225,7 +1255,10 @@ const CreditsTab = memo(function CreditsTab() {
   }, [currentTrack?.id]);
 
   useEffect(() => {
-    const artistId = currentTrack?.artist?.id;
+    // The bio is TIDAL's; a Deezer artist id means another artist there.
+    const artistId = isDeezer(currentTrack)
+      ? undefined
+      : currentTrack?.artist?.id;
     if (!artistId) {
       setBio(null);
       return;

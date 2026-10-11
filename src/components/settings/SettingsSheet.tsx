@@ -11,6 +11,7 @@ import {
   Cpu,
   Tv2,
   Headphones,
+  Disc3,
   type LucideIcon,
 } from "lucide-react";
 import { useEscapeDismiss } from "../../hooks/useEscapeDismiss";
@@ -25,10 +26,12 @@ import NetworkTab from "./NetworkTab";
 import UtilitiesTab from "./UtilitiesTab";
 import McpTab from "./McpTab";
 import OverlayTab from "./OverlayTab";
+import DeezerTab from "./DeezerTab";
 
 export type TabId =
   | "playback"
   | "audio-output"
+  | "deezer"
   | "themes"
   | "scrobble"
   | "discord"
@@ -47,6 +50,7 @@ const GROUPS: {
     tabs: [
       { id: "playback", label: "Playback", icon: Volume2 },
       { id: "audio-output", label: "Audio output", icon: Headphones },
+      { id: "deezer", label: "Deezer", icon: Disc3 },
       { id: "themes", label: "Themes", icon: Palette },
     ],
   },
@@ -175,6 +179,7 @@ export default function SettingsSheet({
             <div className="max-w-[600px] mx-auto">
               {active === "playback" && <PlaybackTab />}
               {active === "audio-output" && <AudioOutputTab />}
+              {active === "deezer" && <DeezerTab />}
               {active === "themes" && <ThemesTab />}
               {active === "scrobble" && <ScrobbleTab />}
               {active === "discord" && <DiscordTab />}
