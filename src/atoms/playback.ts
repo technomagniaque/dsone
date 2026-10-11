@@ -63,6 +63,9 @@ export interface SignalPath {
   formatFallbackTo: string | null;
   dac: DacHwParams | null;
   osMixer: OsMixerInfo | null;
+  /** Set while exclusive / bit-perfect is suspended after a failure and
+   *  playback runs on the default output. Holds the reason. */
+  fallbackReason?: string | null;
 }
 
 export const signalPathAtom = atom<SignalPath | null>(null);

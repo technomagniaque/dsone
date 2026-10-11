@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Settings,
   Info,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -314,6 +315,19 @@ export default function UserMenu() {
               <Toggle on={bitPerfect} />
             </button>
           )}
+
+          {/* Deep link to the full output settings */}
+          <button
+            onClick={() => {
+              setOpen(false);
+              setSettingsTab("audio-output");
+              setSettingsOpen(true);
+            }}
+            className={`${menuItemClass} text-th-text-muted`}
+          >
+            <SlidersHorizontal size={16} />
+            <span className="flex-1 text-left">Audio output settings…</span>
+          </button>
 
           {/* ── Settings ── */}
           <div className="border-t border-th-border-subtle my-1" />

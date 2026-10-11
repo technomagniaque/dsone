@@ -1046,6 +1046,33 @@ export function AppInitializer() {
   }, [store, showToast]);
 
   // ================================================================
+  //  EXCLUSIVE FALLBACK — exclusive / bit-perfect failed, the track
+  //  keeps playing on the default output. Retry re-arms exclusive.
+  // ================================================================
+  useEffect(() => {
+    const unlisten = listen<{ reason: string; retried: boolean }>(
+      "audio-fallback",
+      (event) => {
+        const { reason, retried } = event.payload;
+        showToast(
+          `Exclusive output failed (${reason})${retried ? " after a retry" : ""} — playing on the default output`,
+          "error",
+          10000,
+          {
+            label: "Retry",
+            onClick: () => {
+              invoke("retry_exclusive_output").catch(() => {});
+            },
+          },
+        );
+      },
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [showToast]);
+
+  // ================================================================
   //  RESAMPLING NOTIFICATION — toast when exclusive mode resamples
   // ================================================================
   useEffect(() => {

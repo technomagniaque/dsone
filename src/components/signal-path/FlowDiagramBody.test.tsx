@@ -339,3 +339,60 @@ describe("FlowDiagramBody mixer stage (issue #244)", () => {
     expect(text).not.toContain("LOSSY STAGE");
   });
 });
+
+describe("FlowDiagramBody source and fallback (dsone)", () => {
+  const renderWith = (
+    sp: SignalPath,
+    codec: string,
+    provider?: "deezer" | "tidal",
+  ) =>
+    render(
+      <FlowDiagramBody
+        sp={sp}
+        streamInfo={
+          { codec, bitDepth: 16, sampleRate: 44100 } as Parameters<
+            typeof FlowDiagramBody
+          >[0]["streamInfo"]
+        }
+        currentTrack={
+          {
+            id: 1,
+            title: "t",
+            duration: 1,
+            provider,
+          } as Parameters<typeof FlowDiagramBody>[0]["currentTrack"]
+        }
+        hideTrackHeader
+      />,
+    ).container.textContent ?? "";
+
+  it("names Deezer as the source for a Deezer track", () => {
+    expect(renderWith(normalSp(), "FLAC", "deezer")).toContain("DEEZER");
+  });
+
+  it("keeps TIDAL as the source otherwise", () => {
+    const text = renderWith(normalSp(), "FLAC");
+    expect(text).toContain("TIDAL");
+    expect(text).not.toContain("DEEZER");
+  });
+
+  it("flags an MP3 source as lossy", () => {
+    const text = renderWith(normalSp(), "MP3", "deezer");
+    expect(text).toContain("LOSSY SOURCE");
+  });
+
+  it("does not flag a FLAC source", () => {
+    expect(renderWith(normalSp(), "FLAC", "deezer")).not.toContain(
+      "LOSSY SOURCE",
+    );
+  });
+
+  it("shows the exclusive fallback with its reason", () => {
+    const text = renderWith(
+      normalSp({ fallbackReason: "E50 is in use by another application" }),
+      "FLAC",
+      "deezer",
+    );
+    expect(text).toContain("EXCLUSIVE FALLBACK");
+  });
+});

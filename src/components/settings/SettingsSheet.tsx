@@ -10,11 +10,13 @@ import {
   FileText,
   Cpu,
   Tv2,
+  Headphones,
   type LucideIcon,
 } from "lucide-react";
 import { useEscapeDismiss } from "../../hooks/useEscapeDismiss";
 import { DISMISS_PRIORITY } from "../../lib/dismissStack";
 import PlaybackTab from "./PlaybackTab";
+import AudioOutputTab from "./AudioOutputTab";
 import ThemesTab from "./ThemesTab";
 import ScrobbleTab from "./ScrobbleTab";
 import DiscordTab from "./DiscordTab";
@@ -26,6 +28,7 @@ import OverlayTab from "./OverlayTab";
 
 export type TabId =
   | "playback"
+  | "audio-output"
   | "themes"
   | "scrobble"
   | "discord"
@@ -43,6 +46,7 @@ const GROUPS: {
     label: "Experience",
     tabs: [
       { id: "playback", label: "Playback", icon: Volume2 },
+      { id: "audio-output", label: "Audio output", icon: Headphones },
       { id: "themes", label: "Themes", icon: Palette },
     ],
   },
@@ -170,6 +174,7 @@ export default function SettingsSheet({
           <div className="flex-1 overflow-y-auto px-6 py-6">
             <div className="max-w-[600px] mx-auto">
               {active === "playback" && <PlaybackTab />}
+              {active === "audio-output" && <AudioOutputTab />}
               {active === "themes" && <ThemesTab />}
               {active === "scrobble" && <ScrobbleTab />}
               {active === "discord" && <DiscordTab />}

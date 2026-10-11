@@ -68,6 +68,13 @@ export default function FlowDiagramBody({
   const sourceRate = streamInfo?.sampleRate ?? null;
   const sourceQuality =
     streamInfo?.audioQuality || currentTrack?.audioQuality || null;
+  const sourceName =
+    (currentTrack as { provider?: string } | null)?.provider === "deezer"
+      ? "DEEZER"
+      : "TIDAL";
+  // MP3 / AAC sources are lossy before the first sample is decoded.
+  const lossySource =
+    !!sourceCodec && ["MP3", "AAC", "MP4A", "HE-AAC"].includes(sourceCodec);
 
   const trackTitle = currentTrack?.title ?? null;
   // Prefer the full `artists` list when present (Tidal sets both, with `artist`
@@ -109,7 +116,7 @@ export default function FlowDiagramBody({
 
   const nodes: NodeSpec[] = [
     {
-      title: "TIDAL",
+      title: sourceName,
       primary: "stream",
       secondary: sourceQualityLine || "—",
       tertiary: sourceQuality ?? null,
@@ -147,11 +154,27 @@ export default function FlowDiagramBody({
     },
   ];
 
-  const cable0: CableSpec = {
-    state: "pristine",
-    caption: sourceCodec ? `${sourceCodec} → PCM` : "lossless decompression",
-    alterations: [],
-  };
+  const cable0: CableSpec = lossySource
+    ? {
+        state: "lossy",
+        caption: `${sourceCodec} → PCM`,
+        alterations: [
+          {
+            state: "lossy",
+            label: "LOSSY SOURCE",
+            detail: `${sourceCodec}${sourceQuality ? ` (${sourceQuality})` : ""}`,
+            reason:
+              "The stream itself is lossy-compressed — choose a lossless quality to get the original samples",
+          },
+        ],
+      }
+    : {
+        state: "pristine",
+        caption: sourceCodec
+          ? `${sourceCodec} → PCM`
+          : "lossless decompression",
+        alterations: [],
+      };
 
   const cable1Alterations: Alteration[] = [];
   if (sp?.resampledFrom && sp?.resampledTo) {
@@ -264,6 +287,14 @@ export default function FlowDiagramBody({
   };
 
   const cable2Alterations: Alteration[] = [];
+  if (sp?.fallbackReason) {
+    cable2Alterations.push({
+      state: "altered",
+      label: "EXCLUSIVE FALLBACK",
+      detail: "default output instead of exclusive / bit-perfect",
+      reason: `Exclusive output failed: ${sp.fallbackReason}. Retry from Settings → Audio output`,
+    });
+  }
   if (sp?.formatFallbackFrom && sp?.formatFallbackTo) {
     cable2Alterations.push({
       state: "lossy",
@@ -462,7 +493,8 @@ export default function FlowDiagramBody({
   // Reuse the minimalist's `isPristine` so both views agree. Promotion-only
   // paths (lossless zero-pad) still register as pristine even though the
   // alterations list contains a row for them.
-  const isPristineVerdict = isPristine;
+  // A lossy source can never be pristine, however clean the path after it.
+  const isPristineVerdict = isPristine && !lossySource;
 
   const cableColor = (s: CableState): string =>
     s === "pristine"
