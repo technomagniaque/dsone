@@ -21,7 +21,7 @@ interface DeezerLoginFormProps {
 }
 
 /** Deezer sign-in, shared by the login screen and Settings: Deezer's own
- *  page in the browser (like Deezer Enhanced), or a pasted ARL. */
+ *  page in an app window (like Deezer Enhanced), or a pasted ARL. */
 export default function DeezerLoginForm({
   onSuccess,
   onCancel,
@@ -78,9 +78,8 @@ export default function DeezerLoginForm({
           className="flex items-start gap-2 text-[12.5px] text-th-text-muted leading-relaxed"
         >
           <Loader2 size={14} className="animate-spin mt-0.5 shrink-0" />
-          Finish signing in on the Deezer page that just opened in your browser.
-          When Deezer asks, allow it to open dsone: you will be signed in here
-          automatically.
+          Finish signing in in the Deezer window. dsone signs you in as soon as
+          Deezer accepts your login.
         </p>
       )}
       {browser.state === "error" && (

@@ -20,7 +20,7 @@ import {
   deezerFavoriteTrackIdsAtom,
   deezerUserAtom,
 } from "../../atoms/deezer";
-import { DEEZER_LOGIN_URL, DEEZER_SIGNUP_URL } from "../../lib/deezerLogin";
+import { DEEZER_SIGNUP_URL } from "../../lib/deezerLogin";
 
 const USER = {
   id: 5,
@@ -52,16 +52,18 @@ describe("DeezerLoginForm", () => {
     vi.mocked(openUrl).mockReset();
   });
 
-  it("opens Deezer's sign-in page and waits for the browser", async () => {
-    vi.mocked(openUrl).mockResolvedValue(undefined);
+  it("opens Deezer's sign-in window and waits for it", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
     const { store } = renderForm(vi.fn(), { arl: false });
     expect(screen.queryByLabelText("ARL token")).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Sign in with Deezer" }),
     );
-    expect(openUrl).toHaveBeenCalledWith(DEEZER_LOGIN_URL);
+    expect(invoke).toHaveBeenCalledWith("start_deezer_login_window");
     expect(store.get(deezerBrowserLoginAtom)).toEqual({ state: "waiting" });
-    expect((await screen.findByRole("status")).textContent).toMatch(/browser/);
+    expect((await screen.findByRole("status")).textContent).toMatch(
+      /Deezer window/,
+    );
   });
 
   it("opens Deezer's sign-up page from the create-account link", () => {
@@ -73,13 +75,13 @@ describe("DeezerLoginForm", () => {
     expect(openUrl).toHaveBeenCalledWith(DEEZER_SIGNUP_URL);
   });
 
-  it("shows an error when the browser cannot be opened", async () => {
-    vi.mocked(openUrl).mockRejectedValue("no browser");
+  it("shows an error when the sign-in window cannot be opened", async () => {
+    vi.mocked(invoke).mockRejectedValue("no window");
     renderForm(vi.fn(), { arl: false });
     fireEvent.click(
       screen.getByRole("button", { name: "Sign in with Deezer" }),
     );
-    expect((await screen.findByRole("alert")).textContent).toBe("no browser");
+    expect((await screen.findByRole("alert")).textContent).toBe("no window");
   });
 
   it("explains where to find the ARL cookie", () => {

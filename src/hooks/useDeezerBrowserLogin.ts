@@ -1,30 +1,65 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useSetAtom } from "jotai";
+import { useSetAtom, useStore } from "jotai";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { deezerBrowserLoginAtom } from "../atoms/deezer";
 import {
-  DEEZER_LOGIN_URL,
+  deezerBrowserLoginAtom,
+  deezerUserAtom,
+  type DeezerBrowserLogin,
+  type DeezerUser,
+} from "../atoms/deezer";
+import {
   DEEZER_SIGNUP_URL,
   deezerLoginErrorMessage,
   parseDeezerAutologUrl,
 } from "../lib/deezerLogin";
-import { useDeezer } from "./useDeezer";
+import { loadDeezerFavoriteIds, useDeezer } from "./useDeezer";
 
-/** Open Deezer's own sign-in (or sign-up) page in the default browser. */
+/** Sign in: Deezer's own login page in an app window, whose `arl` cookie
+ *  the backend picks up. Sign-up opens in the default browser instead and
+ *  comes back through the deezer://autolog link. */
 export function useOpenDeezerSignIn() {
   const setState = useSetAtom(deezerBrowserLoginAtom);
   return useCallback(
     async (signup = false) => {
       setState({ state: "waiting" });
       try {
-        await openUrl(signup ? DEEZER_SIGNUP_URL : DEEZER_LOGIN_URL);
+        if (signup) await openUrl(DEEZER_SIGNUP_URL);
+        else await invoke("start_deezer_login_window");
       } catch (err) {
         setState({ state: "error", message: deezerLoginErrorMessage(err) });
       }
     },
     [setState],
   );
+}
+
+/** Results of the sign-in window opened by `useOpenDeezerSignIn`. */
+export function useDeezerLoginWindowEvents() {
+  const store = useStore();
+  useEffect(() => {
+    const setState = (s: DeezerBrowserLogin) =>
+      store.set(deezerBrowserLoginAtom, s);
+    const pending = [
+      listen<DeezerUser>("deezer-login-success", ({ payload }) => {
+        store.set(deezerUserAtom, payload);
+        loadDeezerFavoriteIds(store);
+        setState({ state: "idle" });
+      }),
+      listen<string>("deezer-login-error", ({ payload }) =>
+        setState({ state: "error", message: deezerLoginErrorMessage(payload) }),
+      ),
+      listen("deezer-login-cancelled", () => {
+        if (store.get(deezerBrowserLoginAtom).state === "waiting")
+          setState({ state: "idle" });
+      }),
+    ];
+    return () => {
+      pending.forEach((p) => p.then((un) => un()).catch(() => {}));
+    };
+  }, [store]);
 }
 
 /** Signs in when Deezer hands the ARL back as `deezer://autolog/<ARL>`,

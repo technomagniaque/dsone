@@ -1114,6 +1114,7 @@ pub fn run() {
             commands::playback::set_next_track,
             // deezer
             commands::deezer::deezer_login,
+            commands::deezer::start_deezer_login_window,
             commands::deezer::deezer_restore_session,
             commands::deezer::deezer_logout,
             commands::deezer::deezer_search,

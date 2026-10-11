@@ -1,10 +1,10 @@
-/** Deezer's own desktop sign-in pages (the ones Deezer Enhanced opens).
- *  After sign-in Deezer redirects the browser to `deezer://autolog/<ARL>`,
- *  which the desktop file registers dsone to handle. */
+/** Deezer's own desktop sign-up page (the one Deezer Enhanced opens).
+ *  Afterwards Deezer redirects the browser to `deezer://autolog/<ARL>`,
+ *  which the desktop file registers dsone to handle. Sign-in itself uses
+ *  an app window (`start_deezer_login_window`). */
 const CALLBACK =
   "redirect_uri=https://www.deezer.com/desktop/login/electron/callback?source=electron";
 
-export const DEEZER_LOGIN_URL = `https://account.deezer.com/en/login/?source=electron&${CALLBACK}`;
 export const DEEZER_SIGNUP_URL = `https://account.deezer.com/en/signup/?source=electron&${CALLBACK}`;
 
 const AUTOLOG_PREFIX = "deezer://autolog/";

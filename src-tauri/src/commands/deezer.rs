@@ -5,7 +5,7 @@
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use super::playback::compute_norm_gain;
 use crate::deezer::models::{
@@ -22,6 +22,90 @@ pub async fn deezer_login(
     arl: String,
 ) -> Result<DeezerUser, SoneError> {
     state.deezer.login(&arl).await
+}
+
+const LOGIN_WINDOW: &str = "deezer-login";
+const LOGIN_PAGE: &str = "https://account.deezer.com/en/login/";
+
+/// Opens Deezer's own sign-in page in an app window (as Deezer Enhanced
+/// does) and signs in with the `arl` cookie Deezer sets once the user is
+/// logged in. Emits `deezer-login-success` (the user), `deezer-login-error`
+/// (a message; the window stays open for another try) or
+/// `deezer-login-cancelled` when the window is closed first.
+#[tauri::command]
+pub async fn start_deezer_login_window(app: AppHandle) -> Result<(), SoneError> {
+    if let Some(existing) = app.get_webview_window(LOGIN_WINDOW) {
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+    let url: tauri::Url = LOGIN_PAGE.parse().expect("valid Deezer login URL");
+    let window = WebviewWindowBuilder::new(&app, LOGIN_WINDOW, WebviewUrl::External(url))
+        .title("Sign in to Deezer")
+        .inner_size(1024.0, 768.0)
+        .center()
+        .resizable(true)
+        // Private session: no stale `arl` from an earlier login, and the
+        // only stored copy stays dsone's encrypted one.
+        .incognito(true)
+        // Stay on the web: the cookie is read here, no desktop hand-off.
+        .on_navigation(|url: &tauri::Url| matches!(url.scheme(), "https" | "http" | "about"))
+        .build()
+        .map_err(|e| SoneError::NotConfigured(format!("Failed to open Deezer sign-in: {e}")))?;
+
+    #[cfg(target_os = "linux")]
+    {
+        crate::webview_proxy_auth::install_window(&window);
+        use webkit2gtk::{PermissionRequestExt, WebViewExt};
+        let _ = window.with_webview(|webview| {
+            let wv: webkit2gtk::WebView = webview.inner();
+            wv.connect_permission_request(|_wv, request| {
+                request.deny();
+                true
+            });
+        });
+    }
+
+    tauri::async_runtime::spawn(watch_login_cookie(app));
+    Ok(())
+}
+
+/// Polls the login window's cookie store until Deezer sets a working `arl`.
+async fn watch_login_cookie(app: AppHandle) {
+    let probe: tauri::Url = "https://www.deezer.com/".parse().expect("valid URL");
+    let mut tried: Option<String> = None;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        let Some(window) = app.get_webview_window(LOGIN_WINDOW) else {
+            let _ = app.emit("deezer-login-cancelled", ());
+            return;
+        };
+        let arl = match window.cookies_for_url(probe.clone()) {
+            Ok(cookies) => cookies
+                .into_iter()
+                .find(|c| c.name() == "arl" && !c.value().is_empty())
+                .map(|c| c.value().to_string()),
+            Err(e) => {
+                log::warn!("[deezer-login] cookie read failed: {e}");
+                None
+            }
+        };
+        // An ARL that already failed is not retried until it changes.
+        let Some(arl) = arl.filter(|a| tried.as_deref() != Some(a)) else {
+            continue;
+        };
+        tried = Some(arl.clone());
+        match app.state::<AppState>().deezer.login(&arl).await {
+            Ok(user) => {
+                let _ = window.close();
+                let _ = app.emit("deezer-login-success", &user);
+                return;
+            }
+            Err(e) => {
+                log::warn!("[deezer-login] ARL from the sign-in window rejected: {e}");
+                let _ = app.emit("deezer-login-error", e.to_string());
+            }
+        }
+    }
 }
 
 #[tauri::command]

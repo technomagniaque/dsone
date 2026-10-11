@@ -127,6 +127,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.23.1" date="2026-10-11">
+      <description>
+        <p>Deezer sign-in now happens in a dsone window; fixed Deezer and TIDAL links not reaching the app in the .deb, .rpm and Arch packages.</p>
+      </description>
+    </release>
     <release version="0.23.0" date="2026-10-11">
       <description>
         <p>Deezer-first: TIDAL sign-in is optional, and Deezer sign-in opens Deezer's own page in the browser.</p>

@@ -3,16 +3,21 @@ import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import type { PropsWithChildren } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@tauri-apps/plugin-deep-link", () => ({
   getCurrent: vi.fn(),
   onOpenUrl: vi.fn(),
 }));
 
-import { useDeezerAutologListener } from "./useDeezerBrowserLogin";
+import {
+  useDeezerAutologListener,
+  useDeezerLoginWindowEvents,
+} from "./useDeezerBrowserLogin";
 import { deezerBrowserLoginAtom, deezerUserAtom } from "../atoms/deezer";
 
 const ARL = "f".repeat(150);
@@ -82,5 +87,54 @@ describe("useDeezerAutologListener", () => {
         message: "Invalid ARL",
       }),
     );
+  });
+});
+
+describe("useDeezerLoginWindowEvents", () => {
+  const handlers = new Map<string, (e: { payload: unknown }) => void>();
+
+  afterEach(cleanup);
+  beforeEach(() => {
+    handlers.clear();
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue([]);
+    vi.mocked(listen).mockImplementation(async (name, cb) => {
+      handlers.set(name, cb as (e: { payload: unknown }) => void);
+      return () => {};
+    });
+  });
+
+  function mountEvents() {
+    const store = createStore();
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <Provider store={store}>{children}</Provider>
+    );
+    renderHook(() => useDeezerLoginWindowEvents(), { wrapper });
+    return store;
+  }
+
+  it("stores the user the sign-in window returns", async () => {
+    const store = mountEvents();
+    store.set(deezerBrowserLoginAtom, { state: "waiting" });
+    await waitFor(() =>
+      expect(handlers.has("deezer-login-success")).toBe(true),
+    );
+    handlers.get("deezer-login-success")!({ payload: USER });
+    expect(store.get(deezerUserAtom)).toEqual(USER);
+    expect(store.get(deezerBrowserLoginAtom)).toEqual({ state: "idle" });
+  });
+
+  it("shows the error and resets when the window is closed", async () => {
+    const store = mountEvents();
+    store.set(deezerBrowserLoginAtom, { state: "waiting" });
+    await waitFor(() => expect(handlers.size).toBe(3));
+    handlers.get("deezer-login-error")!({ payload: "Invalid ARL" });
+    expect(store.get(deezerBrowserLoginAtom)).toEqual({
+      state: "error",
+      message: "Invalid ARL",
+    });
+    store.set(deezerBrowserLoginAtom, { state: "waiting" });
+    handlers.get("deezer-login-cancelled")!({ payload: null });
+    expect(store.get(deezerBrowserLoginAtom)).toEqual({ state: "idle" });
   });
 });
