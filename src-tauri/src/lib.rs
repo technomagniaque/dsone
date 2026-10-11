@@ -2,6 +2,7 @@ mod audio;
 pub mod cache;
 mod commands;
 mod crypto;
+mod deezer;
 mod discord;
 mod discord_ipc;
 mod embedded_config;
@@ -54,6 +55,7 @@ mod defaults {
     pub fn overlay_port() -> u16 { 5578 }
     pub fn overlay_host() -> String { "127.0.0.1".to_string() }
     pub fn max_quality() -> String { "HI_RES_LOSSLESS".to_string() }
+    pub fn deezer_quality() -> String { "FLAC".to_string() }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -186,6 +188,9 @@ pub struct Settings {
     /// Settings → Scrobbling.
     #[serde(default = "defaults::yes")]
     pub report_plays: bool,
+    /// Deezer stream quality: "FLAC" | "MP3_320" | "MP3_128".
+    #[serde(default = "defaults::deezer_quality")]
+    pub deezer_quality: String,
 }
 
 impl Default for Settings {
@@ -218,6 +223,7 @@ impl Default for Settings {
             overlay_port: 5578,
             overlay_host: "127.0.0.1".to_string(),
             report_plays: true,
+            deezer_quality: defaults::deezer_quality(),
         }
     }
 }
@@ -268,6 +274,8 @@ pub struct AppState {
     pub overlay_state: crate::overlay::OverlayStateRef,
     pub overlay_handle: Mutex<Option<crate::overlay::OverlayHandle>>,
     pub signal_path: Arc<SignalPathTracker>,
+    /// Deezer provider (session, catalogue, loopback stream server).
+    pub deezer: Arc<deezer::DeezerClient>,
 }
 
 /// The config directory, resolvable before `AppState` exists — `main.rs` needs
@@ -497,7 +505,18 @@ impl AppState {
             })
         });
 
+        let deezer = Arc::new(deezer::DeezerClient::new(
+            proxied_http.clone(),
+            Arc::clone(&crypto),
+            config_dir.join("deezer_session.bin"),
+            &saved
+                .as_ref()
+                .map(|s| s.deezer_quality.clone())
+                .unwrap_or_else(defaults::deezer_quality),
+        ));
+
         Self {
+            deezer,
             audio_player,
             pipeline_probe,
             tidal_client: Mutex::new(tidal_client),
@@ -676,6 +695,17 @@ pub fn run() {
                 let handle_for_mcp = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     crate::mcp::ensure_mcp_started(&handle_for_mcp).await;
+                });
+            }
+
+            // Start the Deezer loopback stream server (127.0.0.1, random
+            // port). Also started lazily on first play if this fails.
+            {
+                let deezer = app.state::<AppState>().deezer.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = deezer.ensure_server().await {
+                        log::warn!("[deezer] stream server not started: {e}");
+                    }
                 });
             }
 
@@ -1075,6 +1105,23 @@ pub fn run() {
             // playback
             commands::playback::play_tidal_track,
             commands::playback::set_next_track,
+            // deezer
+            commands::deezer::deezer_login,
+            commands::deezer::deezer_restore_session,
+            commands::deezer::deezer_logout,
+            commands::deezer::deezer_search,
+            commands::deezer::deezer_get_album,
+            commands::deezer::deezer_get_playlist,
+            commands::deezer::deezer_get_artist,
+            commands::deezer::deezer_get_favorite_tracks,
+            commands::deezer::deezer_get_user_playlists,
+            commands::deezer::deezer_get_user_albums,
+            commands::deezer::deezer_get_flow,
+            commands::deezer::deezer_set_favorite_track,
+            commands::deezer::play_deezer_track,
+            commands::deezer::set_next_deezer_track,
+            commands::deezer::get_deezer_quality,
+            commands::deezer::set_deezer_quality,
             commands::playback::clear_next_track,
             commands::playback::get_stream_info,
             commands::playback::get_video_stream_info,

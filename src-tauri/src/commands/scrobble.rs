@@ -35,6 +35,9 @@ pub struct TrackStartedPayload {
     pub source_type: Option<String>,
     #[serde(default)]
     pub source_id: Option<String>,
+    /// "deezer" for Deezer plays. Absent means TIDAL (older frontends).
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -65,9 +68,16 @@ pub async fn notify_track_started(
         artist_primary: payload.artist_primary,
         artist_mbids: Vec::new(),
     };
+    // A Deezer id is not a TIDAL id: never report it to TIDAL. Passing `None`
+    // still closes out (and reports) a displaced TIDAL track.
+    let tidal_track_id = if payload.provider.as_deref() == Some("deezer") {
+        None
+    } else {
+        payload.track_id
+    };
     state
         .tidal_reporter
-        .on_track_started(payload.track_id, payload.duration_secs, source)
+        .on_track_started(tidal_track_id, payload.duration_secs, source)
         .await;
     state.scrobble_manager.on_track_started(track).await;
     Ok(())
