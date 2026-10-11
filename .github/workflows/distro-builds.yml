@@ -8,7 +8,7 @@ name: Distro packages
 #   - Kubuntu 26.04       -> .deb (built on the ubuntu:26.04 base image)
 #   - Fedora 44           -> .rpm
 #   - CachyOS / Arch      -> .pkg.tar.zst (Tauri .deb repackaged by makepkg)
-# The Flatpak (flatpak-bundle.yml) covers all four as well.
+# The Flatpak (flatpak-bundle.yml, manual only for now) covers all four as well.
 
 on:
   push:
