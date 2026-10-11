@@ -154,12 +154,42 @@ fn audio_route_differs(before: &AudioProxy, after: &AudioProxy) -> bool {
 /// left alone, because `set_property` panics on a property an element lacks.
 const HTTP_SOURCE_FACTORIES: [&str; 2] = ["curlhttpsrc", "souphttpsrc"];
 
+/// The Deezer stream server listens on the loopback interface. Its URIs never
+/// leave the machine, so no proxy applies to them: the server itself fetches
+/// the CDN stream through the shared proxied client.
+pub(crate) fn is_loopback_uri(uri: &str) -> bool {
+    uri.starts_with("http://127.0.0.1:") || uri.starts_with("http://[::1]:")
+}
+
+/// The route for one URI: loopback URIs are always direct, even when the
+/// proxy plan is blocked; everything else follows the plan.
+fn route_for_uri(
+    ap: &AudioProxy,
+    uri: &str,
+    is_dash: bool,
+) -> Result<crate::proxy::Route, crate::proxy::BlockReason> {
+    match ap.route_for(capability_of(is_dash)) {
+        Err(_) if is_loopback_uri(uri) => Ok(crate::proxy::Route::NoProxy),
+        other => other,
+    }
+}
+
 /// Apply one `Route` to one HTTP source element.
 fn apply_route_to_source(source: &gst::Element, route: &crate::proxy::Route) {
     let Some(factory) = source.factory().map(|f| f.name().to_string()) else {
         return;
     };
     if !HTTP_SOURCE_FACTORIES.contains(&factory.as_str()) {
+        return;
+    }
+    // A loopback source (Deezer stream server) in a proxied pipeline stays
+    // direct: pointing it at the proxy would send 127.0.0.1 to the proxy.
+    let location = source
+        .property_value("location")
+        .get::<Option<String>>()
+        .ok()
+        .flatten();
+    if location.as_deref().is_some_and(is_loopback_uri) {
         return;
     }
 
@@ -719,7 +749,7 @@ fn run_attach_executor(
                 }
                 let route = {
                     let ap = audio_proxy.lock().unwrap_or_else(|p| p.into_inner());
-                    ap.route_for(capability_of(is_dash))
+                    route_for_uri(&ap, &uri, is_dash)
                 };
                 if let Err(blocked) = route {
                     // A branch we may not proxy is a branch we must not preroll.
@@ -992,9 +1022,9 @@ fn configure_alsa_hwparams(
     };
     hwp.set_channels(hw_channels)
         .map_err(|e| format!("set_channels({hw_channels}): {e}"))?;
-    hwp.set_buffer_time_near(500_000, ValueOr::Nearest)
+    hwp.set_buffer_time_near(crate::audio_output::alsa_buffer_us(), ValueOr::Nearest)
         .map_err(|e| format!("set_buffer_time: {e}"))?;
-    hwp.set_period_time_near(50_000, ValueOr::Nearest)
+    hwp.set_period_time_near(crate::audio_output::alsa_period_us(), ValueOr::Nearest)
         .map_err(|e| format!("set_period_time: {e}"))?;
     pcm.hw_params(&hwp).map_err(|e| format!("hw_params: {e}"))?;
 
@@ -1073,6 +1103,10 @@ fn spawn_alsa_writer(
     signal_path: Arc<SignalPathTracker>,
     decoded_cell: Arc<Mutex<Option<crate::pipeline_probe::PadCaps>>>,
     output_cell: Arc<Mutex<Option<crate::pipeline_probe::PadCaps>>>,
+    // Fatal output errors go to the worker, which decides between a retry and
+    // the PipeWire fallback. Only if the worker is gone does the writer emit
+    // `audio-error` itself.
+    fail_tx: mpsc::Sender<AudioCommand>,
 ) -> Result<(crossbeam_channel::Sender<WriterCommand>, JoinHandle<()>, PcmFormat, Vec<&'static str>, Vec<u32>), String> {
     let device = device.to_string();
     let initial_format = initial_format.clone();
@@ -1143,6 +1177,23 @@ fn spawn_alsa_writer(
         .name("alsa-writer".into())
         .spawn(move || {
             let sp = signal_path_thread;
+            let report_fatal = |payload: serde_json::Value| {
+                let kind = payload
+                    .get("kind")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("write_error")
+                    .to_string();
+                let message = payload
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .map(str::to_string);
+                if fail_tx
+                    .send(AudioCommand::ExclusiveFailed { kind, message })
+                    .is_err()
+                {
+                    app_handle.emit("audio-error", payload).ok();
+                }
+            };
             let mut pcm = pcm; // rebind as mutable for format-change reopen
             let mut current_fmt = initial_format;
             let period_duration = std::time::Duration::from_millis(50);
@@ -1352,8 +1403,8 @@ fn spawn_alsa_writer(
                                     if !write_silence(&pcm, &silence_buf) {
                                         *decoded_cell.lock().unwrap() = None;
                                         *output_cell.lock().unwrap() = None;
-                                        app_handle.emit("audio-error",
-                                            serde_json::json!({ "kind": "device_disconnected" })).ok();
+                                        report_fatal(
+                                            serde_json::json!({ "kind": "device_disconnected" }));
                                         tearing_down.store(true, Ordering::SeqCst);
                                         break 'main;
                                     }
@@ -1388,8 +1439,8 @@ fn spawn_alsa_writer(
                                             chunk.format.gst_format, chunk.format.channels,
                                             negotiated.gst_format, negotiated.channels
                                         );
-                                        app_handle.emit("audio-error",
-                                            serde_json::json!({ "kind": "device_changed" })).ok();
+                                        report_fatal(
+                                            serde_json::json!({ "kind": "device_changed" }));
                                         tearing_down.store(true, Ordering::SeqCst);
                                         return;
                                     }
@@ -1403,7 +1454,7 @@ fn spawn_alsa_writer(
                                 }
                                 Err(e) => {
                                     log::error!("[alsa-writer] reopen failed: {e}");
-                                    app_handle.emit("audio-error", serde_json::json!({ "kind": "format_change_failed", "message": e })).ok();
+                                    report_fatal( serde_json::json!({ "kind": "format_change_failed", "message": e }));
                                     tearing_down.store(true, Ordering::SeqCst);
                                     return; // pcm already dropped, just exit thread
                                 }
@@ -1413,7 +1464,7 @@ fn spawn_alsa_writer(
                         let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
                         apply_volume(&mut chunk.data, &current_fmt, vol);
                         if let Err(kind) = write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf) {
-                            app_handle.emit("audio-error", serde_json::json!({ "kind": kind })).ok();
+                            report_fatal( serde_json::json!({ "kind": kind }));
                             tearing_down.store(true, Ordering::SeqCst);
                             break;
                         }
@@ -1435,8 +1486,8 @@ fn spawn_alsa_writer(
                                             "[alsa-writer] channel mismatch after format-hint reopen: requested={}ch, ALSA={}ch",
                                             requested.channels, negotiated.channels
                                         );
-                                        app_handle.emit("audio-error",
-                                            serde_json::json!({ "kind": "device_changed" })).ok();
+                                        report_fatal(
+                                            serde_json::json!({ "kind": "device_changed" }));
                                         tearing_down.store(true, Ordering::SeqCst);
                                         return;
                                     }
@@ -1450,7 +1501,7 @@ fn spawn_alsa_writer(
                                 }
                                 Err(e) => {
                                     log::error!("[alsa-writer] reopen for format hint failed: {e}");
-                                    app_handle.emit("audio-error", serde_json::json!({ "kind": "format_change_failed", "message": e })).ok();
+                                    report_fatal( serde_json::json!({ "kind": "format_change_failed", "message": e }));
                                     tearing_down.store(true, Ordering::SeqCst);
                                     return;
                                 }
@@ -1484,8 +1535,8 @@ fn spawn_alsa_writer(
                         if !write_silence(&pcm, &silence_buf) {
                             *decoded_cell.lock().unwrap() = None;
                             *output_cell.lock().unwrap() = None;
-                            app_handle.emit("audio-error",
-                                serde_json::json!({ "kind": "device_disconnected" })).ok();
+                            report_fatal(
+                                serde_json::json!({ "kind": "device_disconnected" }));
                             tearing_down.store(true, Ordering::SeqCst);
                             break 'main;
                         }
@@ -1503,8 +1554,8 @@ fn spawn_alsa_writer(
                             if !write_silence(&pcm, &silence_buf) {
                                 *decoded_cell.lock().unwrap() = None;
                                 *output_cell.lock().unwrap() = None;
-                                app_handle.emit("audio-error",
-                                    serde_json::json!({ "kind": "device_disconnected" })).ok();
+                                report_fatal(
+                                    serde_json::json!({ "kind": "device_disconnected" }));
                                 tearing_down.store(true, Ordering::SeqCst);
                                 break 'main;
                             }
@@ -1527,8 +1578,8 @@ fn spawn_alsa_writer(
                                                         chunk.format.gst_format, chunk.format.channels,
                                                         negotiated.gst_format, negotiated.channels
                                                     );
-                                                    app_handle.emit("audio-error",
-                                                        serde_json::json!({ "kind": "device_changed" })).ok();
+                                                    report_fatal(
+                                                        serde_json::json!({ "kind": "device_changed" }));
                                                     tearing_down.store(true, Ordering::SeqCst);
                                                     return;
                                                 }
@@ -1542,7 +1593,7 @@ fn spawn_alsa_writer(
                                             }
                                             Err(e) => {
                                                 log::error!("[alsa-writer] reopen failed in idle: {e}");
-                                                app_handle.emit("audio-error", serde_json::json!({ "kind": "format_change_failed", "message": e })).ok();
+                                                report_fatal( serde_json::json!({ "kind": "format_change_failed", "message": e }));
                                                 return;
                                             }
                                         }
@@ -1555,7 +1606,7 @@ fn spawn_alsa_writer(
                                     let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
                                     apply_volume(&mut chunk.data, &current_fmt, vol);
                                     if let Err(kind) = write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf) {
-                                        app_handle.emit("audio-error", serde_json::json!({ "kind": kind })).ok();
+                                        report_fatal( serde_json::json!({ "kind": kind }));
                                         break 'main;
                                     }
                                     break; // back to main loop
@@ -1576,8 +1627,8 @@ fn spawn_alsa_writer(
                                                         "[alsa-writer] channel mismatch after format-hint reopen (idle): requested={}ch, ALSA={}ch",
                                                         requested.channels, negotiated.channels
                                                     );
-                                                    app_handle.emit("audio-error",
-                                                        serde_json::json!({ "kind": "device_changed" })).ok();
+                                                    report_fatal(
+                                                        serde_json::json!({ "kind": "device_changed" }));
                                                     tearing_down.store(true, Ordering::SeqCst);
                                                     return;
                                                 }
@@ -1591,7 +1642,7 @@ fn spawn_alsa_writer(
                                             }
                                             Err(e) => {
                                                 log::error!("[alsa-writer] reopen for format hint failed (idle): {e}");
-                                                app_handle.emit("audio-error", serde_json::json!({ "kind": "format_change_failed", "message": e })).ok();
+                                                report_fatal( serde_json::json!({ "kind": "format_change_failed", "message": e }));
                                                 return;
                                             }
                                         }
@@ -1631,8 +1682,8 @@ fn spawn_alsa_writer(
                         if !write_silence(&pcm, &silence_buf) {
                             *decoded_cell.lock().unwrap() = None;
                             *output_cell.lock().unwrap() = None;
-                            app_handle.emit("audio-error",
-                                serde_json::json!({ "kind": "device_disconnected" })).ok();
+                            report_fatal(
+                                serde_json::json!({ "kind": "device_disconnected" }));
                             tearing_down.store(true, Ordering::SeqCst);
                             break 'main;
                         }
@@ -1769,6 +1820,64 @@ enum AudioCommand {
     ListDevices {
         reply: Reply<Result<Vec<AudioDevice>, String>>,
     },
+    /// Advanced output settings (fallback policies, ALSA buffer, sink choice).
+    SetOutputConfig {
+        config: crate::audio_output::AudioOutputConfig,
+        reply: Reply<Result<(), String>>,
+    },
+    /// Leave the fallback: try exclusive / bit-perfect again on the current
+    /// track, at its current position.
+    RetryExclusive {
+        reply: Reply<Result<(), String>>,
+    },
+    /// Sent by the ALSA writer when exclusive output dies mid-track.
+    ExclusiveFailed {
+        kind: String,
+        message: Option<String>,
+    },
+}
+
+/// Tell the user exclusive output failed and playback moved to the default
+/// output: Signal Path, an in-app event (toast), and a desktop notification
+/// whose "Retry" action re-arms exclusive mode.
+#[allow(clippy::too_many_arguments)]
+fn announce_fallback(
+    app_handle: &tauri::AppHandle,
+    signal_path: &SignalPathTracker,
+    cmd_tx: &mpsc::Sender<AudioCommand>,
+    cfg: &crate::audio_output::AudioOutputConfig,
+    kind: &str,
+    message: Option<&str>,
+    device: Option<&str>,
+    retried: bool,
+    start_secs: Option<f32>,
+) {
+    let reason = crate::audio_output::describe_failure(kind, message, device);
+    signal_path.set_fallback(Some(reason.clone()));
+    app_handle
+        .emit(
+            "audio-fallback",
+            serde_json::json!({
+                "kind": kind,
+                "reason": reason,
+                "retried": retried,
+                "midTrack": start_secs.is_some(),
+                "afterFallback": cfg.after_fallback,
+            }),
+        )
+        .ok();
+    if cfg.notify_desktop {
+        let body = if retried {
+            format!("{reason}. Retried once, now playing on the default output.")
+        } else {
+            format!("{reason}. Now playing on the default output.")
+        };
+        let tx = cmd_tx.clone();
+        crate::audio_output::notify_fallback("Exclusive output failed".into(), body, move || {
+            let (rtx, _rrx) = mpsc::channel();
+            let _ = tx.send(AudioCommand::RetryExclusive { reply: rtx });
+        });
+    }
 }
 
 // ── AudioPlayer (public API unchanged) ─────────────────────────────────
@@ -1862,6 +1971,14 @@ impl AudioPlayer {
             let mut bit_perfect = false;
             let mut device: Option<String> = None;
 
+            // Advanced output settings, pushed at startup and on every save.
+            let mut output_cfg = crate::audio_output::AudioOutputConfig::default();
+            // True while exclusive / bit-perfect is suspended after a failure
+            // and playback runs on the default output instead.
+            let mut direct_suspended = false;
+            // A mid-track failure already used the "retry once" attempt.
+            let mut retry_spent = false;
+
             let mut current_volume: f64 = 1.0;
             let mut current_norm_gain: f64 = 1.0;
             let mut track_generation: u64 = 0;
@@ -1936,7 +2053,10 @@ impl AudioPlayer {
                         start_secs,
                         reply,
                     } => {
-                        let result = (|| -> Result<(), String> {
+                        // `use_direct`: build the exclusive ALSA chain (true) or
+                        // the normal one (false). Called up to three times:
+                        // first attempt, the optional retry, the fallback.
+                        let mut build = |use_direct: bool, start_secs: Option<f32>| -> Result<(), String> {
                             // ── Teardown old backend (GStreamer pipeline only) ──
                             if let Some(old_backend) = backend.take() {
                                 tearing_down.store(true, Ordering::SeqCst);
@@ -2006,12 +2126,12 @@ impl AudioPlayer {
                             *decoded_cell_thread.lock().unwrap() = None;
                             *output_cell_thread.lock().unwrap() = None;
                             signal_path.reset_for_track();
-                            if exclusive || bit_perfect {
+                            if use_direct {
                                 signal_path.set_backend("DirectAlsa", device.clone());
                             } else {
                                 signal_path.set_backend("Normal", None);
                             }
-                            signal_path.set_audio_modes(exclusive, bit_perfect);
+                            signal_path.set_audio_modes(exclusive && use_direct, bit_perfect && use_direct);
 
                             // One decision for both arms below. Each used to
                             // sniff the URI for itself, and neither could see
@@ -2019,7 +2139,7 @@ impl AudioPlayer {
                             let is_dash = uri.starts_with("data:application/dash");
                             let route = {
                                 let ap = audio_proxy.lock().unwrap_or_else(|p| p.into_inner());
-                                ap.route_for(capability_of(is_dash))
+                                route_for_uri(&ap, &uri, is_dash)
                             };
                             let route = match route {
                                 Ok(r) => r,
@@ -2043,7 +2163,7 @@ impl AudioPlayer {
                             // build with the generation this route came from.
                             pipeline_route_generation = route_generation.load(Ordering::Acquire);
 
-                            if exclusive || bit_perfect {
+                            if use_direct {
                                 // ── DirectAlsa path ──
                                 #[cfg(not(target_os = "linux"))]
                                 return Err("Exclusive/bit-perfect mode requires Linux".into());
@@ -2100,6 +2220,7 @@ impl AudioPlayer {
                                             Arc::clone(&signal_path),
                                             Arc::clone(&decoded_cell_thread),
                                             Arc::clone(&output_cell_thread),
+                                            cmd_tx_worker.clone(),
                                         )?;
                                         writer_tx = Some(tx);
                                         writer_thread = Some(handle);
@@ -2259,6 +2380,7 @@ impl AudioPlayer {
                                     .build()
                                     .map_err(|e| format!("Failed to create audioconvert: {e}"))?;
                                 let audioresample = gst::ElementFactory::make("audioresample")
+                                    .property("quality", crate::audio_output::resample_quality() as i32)
                                     .build()
                                     .map_err(|e| format!("Failed to create audioresample: {e}"))?;
                                 let norm_vol = gst::ElementFactory::make("volume")
@@ -2269,9 +2391,13 @@ impl AudioPlayer {
                                     .property("volume", slider_to_amplitude(current_volume))
                                     .build()
                                     .map_err(|e| format!("Failed to create user volume: {e}"))?;
-                                let sink = gst::ElementFactory::make("autoaudiosink")
-                                    .build()
-                                    .map_err(|e| format!("Failed to create autoaudiosink: {e}"))?;
+                                // `autoaudiosink`, or `pipewiresink` pinned to the
+                                // node chosen in Audio output settings. During an
+                                // exclusive fallback it is always the default
+                                // output, never a pinned node.
+                                let sink = crate::audio_output::make_normal_sink(
+                                    exclusive || bit_perfect,
+                                )?;
 
                                 pipe.add_many([
                                     &uridecodebin,
@@ -2694,7 +2820,68 @@ impl AudioPlayer {
                                 }
                             }
                             Ok(())
-                        })();
+                        };
+
+                        let wants_direct = exclusive || bit_perfect;
+                        // A new track (not a rebuild) re-arms exclusive when the
+                        // user chose "retry on each track".
+                        if direct_suspended
+                            && start_secs.is_none()
+                            && output_cfg.after_fallback
+                                == crate::audio_output::AfterFallback::RetryEachTrack
+                        {
+                            direct_suspended = false;
+                            signal_path.set_fallback(None);
+                        }
+                        let try_direct = wants_direct && !direct_suspended;
+                        let mut result = build(try_direct, start_secs);
+
+                        let mut fallback: Option<(String, Option<String>, bool)> = None;
+                        if try_direct {
+                            if let Err(first) = &result {
+                                // A proxy refusal is not an output failure: the
+                                // normal chain would be refused the same way.
+                                if !first.starts_with("proxy blocked") {
+                                    let mut last_err = first.clone();
+                                    let mut retried = false;
+                                    if output_cfg.on_failure
+                                        == crate::audio_output::FailurePolicy::RetryOnce
+                                        && !retry_spent
+                                    {
+                                        log::warn!("[audio] exclusive failed ({last_err}), retrying once");
+                                        std::thread::sleep(std::time::Duration::from_millis(400));
+                                        retried = true;
+                                        result = build(true, start_secs);
+                                        if let Err(e) = &result {
+                                            last_err = e.clone();
+                                        }
+                                    }
+                                    if result.is_err() {
+                                        log::warn!("[audio] exclusive failed ({last_err}), falling back to the default output");
+                                        result = build(false, start_secs);
+                                        if result.is_ok() {
+                                            let kind = crate::audio_output::classify_open_error(&last_err).to_string();
+                                            fallback = Some((kind, Some(last_err), retried || retry_spent));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        retry_spent = false;
+                        if let Some((kind, message, retried)) = fallback {
+                            direct_suspended = true;
+                            announce_fallback(
+                                &app_handle,
+                                &signal_path,
+                                &cmd_tx_worker,
+                                &output_cfg,
+                                &kind,
+                                message.as_deref(),
+                                device.as_deref(),
+                                retried,
+                                start_secs,
+                            );
+                        }
                         // Retained only on success: a failed build leaves no
                         // pipeline, and re-issuing a URI that never played would
                         // resume something that was never torn down.
@@ -2703,6 +2890,7 @@ impl AudioPlayer {
                         }
                         reply.send(result).ok();
                     }
+
 
                     AudioCommand::Pause { reply } => {
                         let result = match backend.as_ref() {
@@ -2978,6 +3166,11 @@ impl AudioPlayer {
                         if let Some(d) = dev {
                             device = Some(d);
                         }
+                        // Any explicit mode or device change is a manual retry.
+                        if direct_suspended {
+                            direct_suspended = false;
+                            signal_path.set_fallback(None);
+                        }
                         if !enabled {
                             bit_perfect = false;
                         }
@@ -3010,6 +3203,10 @@ impl AudioPlayer {
 
                     AudioCommand::SetBitPerfect { enabled, reply } => {
                         bit_perfect = enabled;
+                        if direct_suspended {
+                            direct_suspended = false;
+                            signal_path.set_fallback(None);
+                        }
                         if enabled {
                             exclusive = true;
                         }
@@ -3302,7 +3499,14 @@ impl AudioPlayer {
                         // Effective gapless = setting on AND normal mode (C5: never
                         // attach a concat branch under exclusive/bit-perfect — the
                         // DirectAlsa path has no concat).
-                        let effective_gapless = gapless_setting && !exclusive && !bit_perfect;
+                        // A suspended exclusive mode plays on the Normal chain.
+                        // With "retry on each track" the next track must start
+                        // fresh through PlayUrl, so it is not prerolled here.
+                        let on_normal = !(exclusive || bit_perfect) || direct_suspended;
+                        let retry_each = direct_suspended
+                            && output_cfg.after_fallback
+                                == crate::audio_output::AfterFallback::RetryEachTrack;
+                        let effective_gapless = gapless_setting && on_normal && !retry_each;
 
                         // Normal-mode pipeline/concat clones for the executor. If the
                         // backend isn't Normal (or absent), we can't (and mustn't,
@@ -3516,6 +3720,126 @@ impl AudioPlayer {
                         }
                     }
 
+                    AudioCommand::SetOutputConfig { config, reply } => {
+                        output_cfg = config.sanitized();
+                        crate::audio_output::publish(&output_cfg);
+                        // Takes effect at the next pipeline build; the running
+                        // track is left alone so a settings tweak never glitches.
+                        reply.send(Ok(())).ok();
+                    }
+
+                    AudioCommand::RetryExclusive { reply } => {
+                        let was_suspended = direct_suspended;
+                        direct_suspended = false;
+                        retry_spent = false;
+                        signal_path.set_fallback(None);
+                        let resume = match (&current_uri, backend.as_ref()) {
+                            (Some(uri), Some(PlaybackBackend::Normal { pipeline, .. }))
+                                if was_suspended
+                                    && (exclusive || bit_perfect)
+                                    && !eos.load(Ordering::SeqCst) =>
+                            {
+                                let pos = pipeline
+                                    .query_position::<gst::ClockTime>()
+                                    .map(|p| p.nseconds() as f32 / 1_000_000_000.0)
+                                    .unwrap_or(0.0);
+                                Some((uri.clone(), pos))
+                            }
+                            _ => None,
+                        };
+                        match resume {
+                            Some((uri, pos)) => {
+                                // Rebuild on the exclusive chain at the same
+                                // position. Queued behind this arm; the caller's
+                                // reply waits for that rebuild's result.
+                                let (tx, rx) = mpsc::channel();
+                                let _ = cmd_tx_worker.send(AudioCommand::PlayUrl {
+                                    uri,
+                                    start_secs: Some(pos),
+                                    reply: tx,
+                                });
+                                std::thread::spawn(move || {
+                                    let r = rx
+                                        .recv()
+                                        .unwrap_or_else(|_| Err("audio worker gone".into()));
+                                    reply.send(r).ok();
+                                });
+                            }
+                            None => {
+                                reply.send(Ok(())).ok();
+                            }
+                        }
+                    }
+
+                    AudioCommand::ExclusiveFailed { kind, message } => {
+                        let on_direct =
+                            matches!(backend, Some(PlaybackBackend::DirectAlsa { .. }));
+                        let playing_track = current_uri
+                            .clone()
+                            .filter(|_| on_direct && !eos.load(Ordering::SeqCst));
+                        match playing_track {
+                            Some(uri) => {
+                                let frames = frames_written.load(Ordering::Relaxed);
+                                let rate = current_sample_rate.load(Ordering::Relaxed);
+                                let pos = if rate > 0 {
+                                    frames as f32 / rate as f32
+                                } else {
+                                    0.0
+                                };
+                                log::warn!(
+                                    "[audio] exclusive output died mid-track ({kind}) at {pos:.1}s"
+                                );
+                                if output_cfg.on_failure
+                                    == crate::audio_output::FailurePolicy::RetryOnce
+                                {
+                                    // The rebuild below is the one retry; if it
+                                    // fails PlayUrl falls back without another.
+                                    retry_spent = true;
+                                } else {
+                                    direct_suspended = true;
+                                    announce_fallback(
+                                        &app_handle,
+                                        &signal_path,
+                                        &cmd_tx_worker,
+                                        &output_cfg,
+                                        &kind,
+                                        message.as_deref(),
+                                        device.as_deref(),
+                                        false,
+                                        Some(pos),
+                                    );
+                                }
+                                let (tx, rx) = mpsc::channel();
+                                let _ = cmd_tx_worker.send(AudioCommand::PlayUrl {
+                                    uri,
+                                    start_secs: Some(pos),
+                                    reply: tx,
+                                });
+                                let app = app_handle.clone();
+                                std::thread::spawn(move || {
+                                    if let Ok(Err(e)) = rx.recv() {
+                                        app.emit(
+                                            "audio-error",
+                                            serde_json::json!({ "kind": "playback_error", "message": e }),
+                                        )
+                                        .ok();
+                                    }
+                                });
+                            }
+                            None => {
+                                // Nothing playing (idle silence between tracks):
+                                // report as before; the next track's build
+                                // decides about the fallback.
+                                app_handle
+                                    .emit(
+                                        "audio-error",
+                                        serde_json::json!({ "kind": kind, "message": message }),
+                                    )
+                                    .ok();
+                            }
+                        }
+                    }
+
                     AudioCommand::ListDevices { reply } => {
                         let result = list_alsa_devices_inner();
                         reply.send(result).ok();
@@ -3649,6 +3973,18 @@ impl AudioPlayer {
     pub fn clear_next_track(&self) -> Result<(), String> {
         self.post_cmd(|reply| AudioCommand::ClearNextTrack { reply })
     }
+    pub fn set_output_config(
+        &self,
+        config: crate::audio_output::AudioOutputConfig,
+    ) -> Result<(), String> {
+        self.send_cmd(|reply| AudioCommand::SetOutputConfig { config, reply })
+    }
+
+    /// Leave a fallback and try exclusive / bit-perfect again now.
+    pub fn retry_exclusive(&self) -> Result<(), String> {
+        self.send_cmd(|reply| AudioCommand::RetryExclusive { reply })
+    }
+
     pub fn list_devices(&self) -> Result<Vec<AudioDevice>, String> {
         self.send_cmd(|reply| AudioCommand::ListDevices { reply })
     }
@@ -3814,8 +4150,10 @@ fn build_appsink_pipeline(
         // Exclusive (non-bit-perfect): volume applied in ALSA writer thread.
         // Rate constrained to DAC-supported rates — audioresample converts unsupported rates.
         let audioresample = gst::ElementFactory::make("audioresample")
+            .property("quality", crate::audio_output::resample_quality() as i32)
             .build()
             .map_err(|e| format!("Failed to create audioresample: {e}"))?;
+        audioconvert.set_property_from_str("dithering", crate::audio_output::dither().as_gst());
         // Construct capsfilter EMPTY so it imposes no FORMAT constraint until
         // pad_added relocks it with the chosen format. Seeding a format here
         // makes src_pad.link() trigger downstream negotiation against the seed

@@ -63,6 +63,10 @@ pub struct SignalPath {
     /// OS-mixer info (PulseAudio/PipeWire). None when probe failed or
     /// pactl is unavailable.
     pub os_mixer: Option<crate::pipeline_probe::OsMixerInfo>,
+
+    /// Set while exclusive / bit-perfect output is suspended after a failure
+    /// and playback runs on the default output instead. Holds the reason.
+    pub fallback_reason: Option<String>,
 }
 
 pub struct SignalPathTracker {
@@ -118,6 +122,16 @@ impl SignalPathTracker {
             let mut s = self.state.lock().unwrap();
             s.backend = Some(backend.to_string());
             s.output_device = device;
+            s.clone()
+        };
+        self.emit(snap);
+    }
+
+    /// Record (or clear) the exclusive → default-output fallback.
+    pub fn set_fallback(&self, reason: Option<String>) {
+        let snap = {
+            let mut s = self.state.lock().unwrap();
+            s.fallback_reason = reason;
             s.clone()
         };
         self.emit(snap);

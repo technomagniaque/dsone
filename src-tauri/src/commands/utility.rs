@@ -1176,3 +1176,44 @@ mod tests {
         );
     }
 }
+
+#[tauri::command]
+pub fn get_audio_output_config(
+    state: State<'_, AppState>,
+) -> crate::audio_output::AudioOutputConfig {
+    state.load_settings().unwrap_or_default().audio_output
+}
+
+#[tauri::command]
+pub fn set_audio_output_config(
+    state: State<'_, AppState>,
+    config: crate::audio_output::AudioOutputConfig,
+) -> Result<crate::audio_output::AudioOutputConfig, SoneError> {
+    let config = config.sanitized();
+    state
+        .audio_player
+        .set_output_config(config.clone())
+        .map_err(SoneError::Audio)?;
+    let mut settings = state.load_settings().unwrap_or_default();
+    settings.audio_output = config.clone();
+    state.save_settings(&settings)?;
+    Ok(config)
+}
+
+#[tauri::command]
+pub async fn list_pipewire_sinks() -> Vec<crate::audio_output::PipewireSink> {
+    // The device monitor blocks while it probes; keep it off the async runtime.
+    tokio::task::spawn_blocking(crate::audio_output::list_pipewire_sinks)
+        .await
+        .unwrap_or_default()
+}
+
+/// Leave the PipeWire fallback and try exclusive / bit-perfect again now.
+#[tauri::command]
+pub async fn retry_exclusive_output(state: State<'_, AppState>) -> Result<(), SoneError> {
+    let player = state.audio_player.clone();
+    tokio::task::spawn_blocking(move || player.retry_exclusive())
+        .await
+        .map_err(|e| SoneError::Audio(e.to_string()))?
+        .map_err(SoneError::Audio)
+}

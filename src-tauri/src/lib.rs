@@ -1,4 +1,5 @@
 mod audio;
+mod audio_output;
 pub mod cache;
 mod commands;
 mod crypto;
@@ -186,6 +187,9 @@ pub struct Settings {
     /// Settings → Scrobbling.
     #[serde(default = "defaults::yes")]
     pub report_plays: bool,
+    /// Advanced output settings (fallback policies, ALSA buffer, PipeWire sink).
+    #[serde(default)]
+    pub audio_output: crate::audio_output::AudioOutputConfig,
 }
 
 impl Default for Settings {
@@ -218,6 +222,7 @@ impl Default for Settings {
             overlay_port: 5578,
             overlay_host: "127.0.0.1".to_string(),
             report_plays: true,
+            audio_output: Default::default(),
         }
     }
 }
@@ -701,6 +706,8 @@ pub fn run() {
                 if bp {
                     state.audio_player.set_bit_perfect(true).ok();
                 }
+                let output_cfg = state.load_settings().unwrap_or_default().audio_output;
+                state.audio_player.set_output_config(output_cfg).ok();
                 let _ = state
                     .audio_player
                     .set_gapless(state.gapless.load(std::sync::atomic::Ordering::Relaxed));
@@ -1128,6 +1135,10 @@ pub fn run() {
             commands::utility::get_gapless,
             commands::utility::get_gapless_supported,
             commands::utility::set_gapless,
+            commands::utility::get_audio_output_config,
+            commands::utility::set_audio_output_config,
+            commands::utility::list_pipewire_sinks,
+            commands::utility::retry_exclusive_output,
             commands::utility::get_max_quality,
             commands::utility::set_max_quality,
             commands::utility::get_exclusive_device,
