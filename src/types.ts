@@ -68,6 +68,9 @@ export function getTidalVideoUrl(
   return `https://resources.tidal.com/videos/${path}/${validSize}x${validSize}.mp4`;
 }
 
+/** Streaming service an item comes from. Absent means TIDAL. */
+export type Provider = "tidal" | "deezer";
+
 export interface MediaMetadata {
   tags: string[]; // "LOSSLESS" | "HIRES_LOSSLESS" | "DOLBY_ATMOS"
 }
@@ -122,6 +125,7 @@ export interface Track {
   itemType?: string;
   /** Video thumbnail UUID (videos carry `imageId` instead of `album.cover`). */
   imageId?: string;
+  provider?: Provider;
   _qid?: string;
 }
 
@@ -187,6 +191,7 @@ export interface AlbumDetail {
   streamStartDate?: string;
   audioModes?: string[];
   mediaMetadata?: MediaMetadata;
+  provider?: Provider;
 }
 
 export interface PaginatedTracks {
@@ -218,6 +223,7 @@ type ViewTarget =
       type: "album";
       albumId: number;
       albumInfo?: { title: string; cover?: string; artistName?: string };
+      provider?: Provider;
     }
   | {
       type: "playlist";
@@ -231,9 +237,10 @@ type ViewTarget =
         numberOfVideos?: number;
         isUserPlaylist?: boolean;
       };
+      provider?: Provider;
     }
   | { type: "favorites" }
-  | { type: "search"; query: string; tab?: SearchTab }
+  | { type: "search"; query: string; tab?: SearchTab; provider?: Provider }
   | {
       type: "viewAll";
       title: string;
@@ -244,6 +251,7 @@ type ViewTarget =
       type: "artist";
       artistId: number;
       artistInfo?: { name: string; picture?: string };
+      provider?: Provider;
     }
   | {
       type: "mix";
@@ -277,7 +285,11 @@ type ViewTarget =
       type: "profilePlaylists";
       playlists: ProfilePlaylist[];
       profileName: string;
-    };
+    }
+  | { type: "deezerHome" }
+  | { type: "deezerFavorites" }
+  | { type: "deezerFlow" }
+  | { type: "tidalLogin" };
 
 export type AppView = ViewTarget & {
   __navId?: number;
@@ -291,6 +303,7 @@ export interface SearchResults {
     picture?: string;
     artworkId?: string;
     selectedAlbumCoverFallback?: string;
+    provider?: Provider;
   }[];
   albums: AlbumDetail[];
   tracks: Track[];
@@ -355,6 +368,7 @@ export interface Playlist {
   squareImage?: string;
   sharingLevel?: string;
   addedAt?: string;
+  provider?: Provider;
 }
 
 export interface AllPlaylistsResponse {

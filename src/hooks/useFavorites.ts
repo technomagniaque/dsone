@@ -13,6 +13,9 @@ import {
   optimisticFavoriteMixesAtom,
 } from "../atoms/favorites";
 import { authTokensAtom } from "../atoms/auth";
+import { deezerFavoriteTrackIdsAtom } from "../atoms/deezer";
+import { deezerSetFavoriteTrack } from "../api/deezer";
+import { isDeezer } from "../lib/provider";
 import { deletedPlaylistIdsAtom } from "../atoms/playlists";
 import {
   addTrackToFavoritesCache,
@@ -44,6 +47,9 @@ export function useFavorites() {
     followedArtistIdsAtom,
   );
   const [favoriteMixIds, setFavoriteMixIds] = useAtom(favoriteMixIdsAtom);
+  const [deezerFavoriteTrackIds, setDeezerFavoriteTrackIds] = useAtom(
+    deezerFavoriteTrackIdsAtom,
+  );
   const authTokens = useAtomValue(authTokensAtom);
   const store = useStore();
   const setDeletedPlaylistIds = useSetAtom(deletedPlaylistIdsAtom);
@@ -53,8 +59,40 @@ export function useFavorites() {
 
   // ==================== Tracks ====================
 
+  // Deezer tracks are favourited on Deezer, never with a Deezer id on TIDAL.
+  const setDeezerFavorite = useCallback(
+    async (trackId: number, favorite: boolean): Promise<void> => {
+      const apply = (on: boolean) =>
+        setDeezerFavoriteTrackIds((prev) => {
+          const next = new Set(prev);
+          if (on) next.add(trackId);
+          else next.delete(trackId);
+          return next;
+        });
+      apply(favorite);
+      try {
+        await deezerSetFavoriteTrack(trackId, favorite);
+      } catch (error) {
+        apply(!favorite);
+        console.error("Failed to update Deezer favorite:", error);
+        throw error;
+      }
+    },
+    [setDeezerFavoriteTrackIds],
+  );
+
+  /** Whether `track` is in the Loved tracks of the service it comes from. */
+  const isTrackFavorite = useCallback(
+    (track: Track): boolean =>
+      isDeezer(track)
+        ? deezerFavoriteTrackIds.has(track.id)
+        : favoriteTrackIds.has(track.id),
+    [deezerFavoriteTrackIds, favoriteTrackIds],
+  );
+
   const addFavoriteTrack = useCallback(
     async (trackId: number, track?: Track): Promise<void> => {
+      if (isDeezer(track)) return setDeezerFavorite(trackId, true);
       if (!authTokens?.user_id) throw new Error("Not authenticated");
       setFavoriteTrackIds((prev: Set<number>) => new Set([...prev, trackId]));
       if (track) addTrackToFavoritesCache(authTokens.user_id, track);
@@ -74,11 +112,12 @@ export function useFavorites() {
         throw error;
       }
     },
-    [authTokens?.user_id, setFavoriteTrackIds],
+    [authTokens?.user_id, setFavoriteTrackIds, setDeezerFavorite],
   );
 
   const removeFavoriteTrack = useCallback(
-    async (trackId: number): Promise<void> => {
+    async (trackId: number, track?: Track): Promise<void> => {
+      if (isDeezer(track)) return setDeezerFavorite(trackId, false);
       if (!authTokens?.user_id) throw new Error("Not authenticated");
       setFavoriteTrackIds((prev: Set<number>) => {
         const next = new Set(prev);
@@ -97,7 +136,7 @@ export function useFavorites() {
         throw error;
       }
     },
-    [authTokens?.user_id, setFavoriteTrackIds],
+    [authTokens?.user_id, setFavoriteTrackIds, setDeezerFavorite],
   );
 
   // ==================== Videos ====================
@@ -387,6 +426,7 @@ export function useFavorites() {
 
   return {
     favoriteTrackIds,
+    isTrackFavorite,
     addFavoriteTrack,
     removeFavoriteTrack,
     favoriteVideoIds,

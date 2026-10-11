@@ -1,4 +1,5 @@
 import {
+  LogIn,
   LogOut,
   Keyboard,
   X,
@@ -21,7 +22,9 @@ import {
   bitPerfectAtom,
   exclusiveDeviceAtom,
 } from "../atoms/playback";
-import { currentUserAvatarAtom } from "../atoms/auth";
+import { currentUserAvatarAtom, isAuthenticatedAtom } from "../atoms/auth";
+import { deezerUserAtom } from "../atoms/deezer";
+import { useDeezer } from "../hooks/useDeezer";
 import { useToast } from "../contexts/ToastContext";
 import {
   ACTION_REGISTRY,
@@ -43,8 +46,14 @@ import TidalImage from "./TidalImage";
 
 export default function UserMenu() {
   const { userName, logout } = useAuth();
-  const { navigateToProfile } = useNavigation();
-  const avatarUrl = useAtomValue(currentUserAvatarAtom);
+  const { navigateToProfile, navigateTo } = useNavigation();
+  const tidalAvatarUrl = useAtomValue(currentUserAvatarAtom);
+  const tidalSignedIn = useAtomValue(isAuthenticatedAtom);
+  const deezerUser = useAtomValue(deezerUserAtom);
+  const { logout: logoutDeezer } = useDeezer();
+  // A Deezer-only session has no TIDAL account to show or log out of.
+  const showTidal = tidalSignedIn || !deezerUser;
+  const avatarUrl = showTidal ? tidalAvatarUrl : (deezerUser?.picture ?? null);
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Set only by a deep link, and cleared when that sheet closes: undefined
@@ -201,29 +210,59 @@ export default function UserMenu() {
       {open && (
         <div className="absolute right-0 top-full mt-2 w-72 bg-th-surface rounded-lg shadow-2xl shadow-black/60 border border-th-border-popover z-50 py-1 animate-fadeIn">
           {/* User info — navigates to profile */}
-          <button
-            onClick={() => {
-              navigateToProfile();
-              setOpen(false);
-            }}
-            className="w-full px-4 py-3 border-b border-th-border-subtle hover:bg-th-border-subtle transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-th-button overflow-hidden shrink-0">
-                <TidalImage
-                  src={avatarUrl ?? undefined}
-                  alt=""
-                  type="artist"
-                  className="w-full h-full"
-                />
+          {showTidal && (
+            <button
+              onClick={() => {
+                navigateToProfile();
+                setOpen(false);
+              }}
+              className="w-full px-4 py-3 border-b border-th-border-subtle hover:bg-th-border-subtle transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-th-button overflow-hidden shrink-0">
+                  <TidalImage
+                    src={avatarUrl ?? undefined}
+                    alt=""
+                    type="artist"
+                    className="w-full h-full"
+                  />
+                </div>
+                <div className="min-w-0 flex-1 text-left">
+                  <p className="text-[13px] font-medium text-th-text-primary truncate">
+                    {userName}
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0 flex-1 text-left">
-                <p className="text-[13px] font-medium text-th-text-primary truncate">
-                  {userName}
-                </p>
+            </button>
+          )}
+
+          {/* Deezer account — opens the Deezer home */}
+          {deezerUser && (
+            <button
+              onClick={() => {
+                navigateTo({ type: "deezerHome" });
+                setOpen(false);
+              }}
+              className="w-full px-4 py-3 border-b border-th-border-subtle hover:bg-th-border-subtle transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-th-button overflow-hidden shrink-0">
+                  <TidalImage
+                    src={deezerUser.picture}
+                    alt=""
+                    type="artist"
+                    className="w-full h-full"
+                  />
+                </div>
+                <div className="min-w-0 flex-1 text-left">
+                  <p className="text-[13px] font-medium text-th-text-primary truncate">
+                    {deezerUser.name}
+                  </p>
+                  <p className="text-[11px] text-th-text-faint">Deezer</p>
+                </div>
               </div>
-            </div>
-          </button>
+            </button>
+          )}
 
           {/* ── Exclusive output group ── */}
 
@@ -359,16 +398,42 @@ export default function UserMenu() {
 
           {/* ── Logout ── */}
           <div className="border-t border-th-border-subtle my-1" />
-          <button
-            onClick={() => {
-              setOpen(false);
-              logout();
-            }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-red-400 hover:bg-th-border-subtle transition-colors"
-          >
-            <LogOut size={16} />
-            Log out
-          </button>
+          {!tidalSignedIn && deezerUser && (
+            <button
+              onClick={() => {
+                setOpen(false);
+                navigateTo({ type: "tidalLogin" });
+              }}
+              className={menuItemClass}
+            >
+              <LogIn size={16} />
+              Sign in to TIDAL
+            </button>
+          )}
+          {showTidal && (
+            <button
+              onClick={() => {
+                setOpen(false);
+                logout();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-red-400 hover:bg-th-border-subtle transition-colors"
+            >
+              <LogOut size={16} />
+              {deezerUser ? "Log out of TIDAL" : "Log out"}
+            </button>
+          )}
+          {deezerUser && (
+            <button
+              onClick={() => {
+                setOpen(false);
+                void logoutDeezer();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-red-400 hover:bg-th-border-subtle transition-colors"
+            >
+              <LogOut size={16} />
+              Log out of Deezer
+            </button>
+          )}
         </div>
       )}
 

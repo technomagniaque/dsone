@@ -23,6 +23,8 @@ import { useContentPrefs } from "../hooks/useContentPrefs";
 import AddToPlaylistMenu from "./AddToPlaylistMenu";
 import MenuPortal from "./MenuPortal";
 import { getTrack } from "../api/tidal";
+import { isDeezer } from "../lib/provider";
+import { getDeezerShareUrl } from "../lib/deezerSources";
 
 interface TrackContextMenuProps {
   track: Track;
@@ -48,8 +50,10 @@ export default function TrackContextMenu({
   onTrackRemoved,
 }: TrackContextMenuProps) {
   const { addToQueue, playNextInQueue } = usePlaybackActions();
-  const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } =
+  const { isTrackFavorite, addFavoriteTrack, removeFavoriteTrack } =
     useFavorites();
+  // Deezer tracks: no TIDAL playlists, no TIDAL track radio.
+  const deezer = isDeezer(track);
   const { navigateToMix } = useNavigation();
   const { removeTrackFromPlaylist } = usePlaylists();
   const { showToast } = useToast();
@@ -60,7 +64,7 @@ export default function TrackContextMenu({
   // Fake anchor ref for AddToPlaylistMenu positioning — we'll use the menu itself
   const playlistBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  const isFav = favoriteTrackIds.has(track.id);
+  const isFav = isTrackFavorite(track);
   const canRemoveFromPlaylist = !!playlistId && !!isUserPlaylist;
   const contentPrefs = useContentPrefs();
   const unavailable =
@@ -79,7 +83,7 @@ export default function TrackContextMenu({
 
   const trackSource = track.album
     ? {
-        type: "album" as const,
+        type: deezer ? "deezer-album" : "album",
         id: track.album.id,
         name: track.album.title,
         image: track.album.cover,
@@ -101,7 +105,7 @@ export default function TrackContextMenu({
   const handleToggleFavorite = useCallback(async () => {
     try {
       if (isFav) {
-        await removeFavoriteTrack(track.id);
+        await removeFavoriteTrack(track.id, track);
         showToast(`Removed "${trackLabel}" from Loved tracks`);
       } else {
         await addFavoriteTrack(track.id, track);
@@ -180,8 +184,9 @@ export default function TrackContextMenu({
 
   const handleShare = useCallback(async () => {
     try {
-      const url =
-        track.itemType === "video"
+      const url = deezer
+        ? getDeezerShareUrl("track", track.id)
+        : track.itemType === "video"
           ? getVideoShareUrl(track.id)
           : getTrackShareUrl(track.id);
       await navigator.clipboard.writeText(url);
@@ -190,7 +195,7 @@ export default function TrackContextMenu({
       showToast("Failed to copy link", "error");
     }
     onClose();
-  }, [track.id, track.itemType, showToast, onClose]);
+  }, [deezer, track.id, track.itemType, showToast, onClose]);
 
   const menuItemClass =
     "w-full flex items-center gap-3 px-4 py-2.5 hover:bg-th-hl-faint transition-colors text-left text-[14px] text-th-text-secondary hover:text-th-text-primary";
@@ -226,19 +231,21 @@ export default function TrackContextMenu({
         {/* Divider */}
         <div className="my-1 border-t border-th-inset" />
 
-        {/* Add to playlist */}
-        <button
-          ref={playlistBtnRef}
-          className={`${menuItemClass} ${showPlaylistSubmenu ? "bg-th-hl-faint" : ""}`}
-          onClick={() => setShowPlaylistSubmenu(true)}
-        >
-          <ListMusic size={18} className="shrink-0 text-th-text-muted" />
-          <span>Add to playlist</span>
-          <ChevronRight
-            size={16}
-            className="ml-auto shrink-0 text-th-text-muted"
-          />
-        </button>
+        {/* Add to playlist (TIDAL playlists take TIDAL tracks only) */}
+        {!deezer && (
+          <button
+            ref={playlistBtnRef}
+            className={`${menuItemClass} ${showPlaylistSubmenu ? "bg-th-hl-faint" : ""}`}
+            onClick={() => setShowPlaylistSubmenu(true)}
+          >
+            <ListMusic size={18} className="shrink-0 text-th-text-muted" />
+            <span>Add to playlist</span>
+            <ChevronRight
+              size={16}
+              className="ml-auto shrink-0 text-th-text-muted"
+            />
+          </button>
+        )}
 
         {/* Add to / Remove from Loved tracks */}
         <button className={menuItemClass} onClick={handleToggleFavorite}>
@@ -253,7 +260,8 @@ export default function TrackContextMenu({
         </button>
 
         {/* Go to track radio (not for videos; hidden if mixes is populated but TRACK_MIX is absent) */}
-        {track.itemType !== "video" &&
+        {!deezer &&
+          track.itemType !== "video" &&
           (!track.mixes || !!track.mixes?.TRACK_MIX) && (
             <>
               <div className="my-1 border-t border-th-inset" />

@@ -11,20 +11,19 @@ import {
   Mic2,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, memo } from "react";
-import { useAtomValue, useSetAtom, useAtom, useStore } from "jotai";
+import { useAtomValue, useSetAtom, useAtom } from "jotai";
 import {
   currentTrackAtom,
   isPlayingAtom,
   repeatAtom,
   shuffleAtom,
 } from "../atoms/playback";
-import { favoriteTrackIdsAtom } from "../atoms/favorites";
+import { useFavorites } from "../hooks/useFavorites";
 import {
   maximizedPlayerAtom,
   maximizedLyricsAtom,
   videoCoversAtom,
 } from "../atoms/ui";
-import { authTokensAtom } from "../atoms/auth";
 import { usePlaybackActions } from "../hooks/usePlaybackActions";
 import { useProgressScrub } from "../hooks/useProgressScrub";
 import { useEscapeDismiss } from "../hooks/useEscapeDismiss";
@@ -46,12 +45,9 @@ import QualityBadge from "./QualityBadge";
 import SignalPathPanel from "./SignalPathPanel";
 import { getTrackArtistDisplay } from "../utils/itemHelpers";
 import VolumeSlider from "./VolumeSlider";
-import {
-  addTrackToFavoritesCache,
-  removeTrackFromFavoritesCache,
-  getTrackLyrics,
-} from "../api/tidal";
+import { getTrackLyrics } from "../api/tidal";
 import { parseLrc, type LrcLine } from "../lib/lrc";
+import { isDeezer } from "../lib/provider";
 import { themeAtom } from "../atoms/theme";
 
 function useThemeContext() {
@@ -568,6 +564,12 @@ const MaximizedLyrics = memo(function MaximizedLyrics({
     setProvider(null);
     setIsRtl(false);
 
+    // Lyrics come from TIDAL; a Deezer id would fetch some other song's.
+    if (isDeezer(currentTrack)) {
+      setLoading(false);
+      return;
+    }
+
     getTrackLyrics(currentTrack.id)
       .then((result) => {
         if (!active) return;
@@ -727,9 +729,8 @@ const MaximizedLyrics = memo(function MaximizedLyrics({
 export default function MaximizedPlayer() {
   const currentTrack = useAtomValue(currentTrackAtom);
   const setMaximized = useSetAtom(maximizedPlayerAtom);
-  const favoriteTrackIds = useAtomValue(favoriteTrackIdsAtom);
-  const setFavoriteTrackIds = useSetAtom(favoriteTrackIdsAtom);
-  const store = useStore();
+  const { isTrackFavorite, addFavoriteTrack, removeFavoriteTrack } =
+    useFavorites();
   const { isDark, bgBaseRgb } = useThemeContext();
 
   // Context menu state
@@ -758,56 +759,21 @@ export default function MaximizedPlayer() {
   }, [coverKey]);
 
   // All hooks MUST be above the early return (Rules of Hooks).
-  const isLiked = currentTrack ? favoriteTrackIds.has(currentTrack.id) : false;
+  const isLiked = currentTrack ? isTrackFavorite(currentTrack) : false;
   const showLyrics = useAtomValue(maximizedLyricsAtom);
   const lyricsTier = useLyricsTier();
 
+  // Shared with every other heart: optimistic, rolled back on failure, and
+  // routed to Deezer for a Deezer track.
   const toggleLike = useCallback(async () => {
     if (!currentTrack) return;
-    const authTokens = store.get(authTokensAtom);
-    if (!authTokens?.user_id) return;
-    const userId = authTokens.user_id;
-
     try {
-      if (isLiked) {
-        setFavoriteTrackIds((prev: Set<number>) => {
-          const next = new Set(prev);
-          next.delete(currentTrack.id);
-          return next;
-        });
-        removeTrackFromFavoritesCache(userId, currentTrack.id);
-        await invoke("remove_favorite_track", {
-          userId,
-          trackId: currentTrack.id,
-        });
-      } else {
-        setFavoriteTrackIds(
-          (prev: Set<number>) => new Set([...prev, currentTrack.id]),
-        );
-        addTrackToFavoritesCache(userId, currentTrack);
-        await invoke("add_favorite_track", {
-          userId,
-          trackId: currentTrack.id,
-        });
-      }
+      if (isLiked) await removeFavoriteTrack(currentTrack.id, currentTrack);
+      else await addFavoriteTrack(currentTrack.id, currentTrack);
     } catch (err) {
-      // Rollback optimistic update
-      if (isLiked) {
-        setFavoriteTrackIds(
-          (prev: Set<number>) => new Set([...prev, currentTrack.id]),
-        );
-        addTrackToFavoritesCache(userId, currentTrack);
-      } else {
-        setFavoriteTrackIds((prev: Set<number>) => {
-          const next = new Set(prev);
-          next.delete(currentTrack.id);
-          return next;
-        });
-        removeTrackFromFavoritesCache(userId, currentTrack.id);
-      }
       console.error("Failed to toggle track favorite:", err);
     }
-  }, [currentTrack, isLiked, setFavoriteTrackIds, store]);
+  }, [currentTrack, isLiked, addFavoriteTrack, removeFavoriteTrack]);
 
   // Auto-hide controls — ref guards against redundant setState on mouse move
   const [controlsVisible, setControlsVisible] = useState(true);

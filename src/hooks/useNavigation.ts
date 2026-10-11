@@ -3,7 +3,12 @@ import { useSetAtom } from "jotai";
 import { currentViewAtom } from "../atoms/navigation";
 import { drawerOpenAtom, maximizedPlayerAtom } from "../atoms/ui";
 import { pushView } from "../lib/scrollMemory";
-import type { AppView, ProfilePlaylist } from "../types";
+import type { AppView, ProfilePlaylist, Provider } from "../types";
+
+// Only Deezer views carry the field, so TIDAL views keep their exact shape
+// (history entries, equality checks and tests compare them structurally).
+const providerField = (provider?: Provider) =>
+  provider === "deezer" ? { provider } : {};
 
 export function useNavigation() {
   const setCurrentView = useSetAtom(currentViewAtom);
@@ -32,8 +37,14 @@ export function useNavigation() {
     (
       albumId: number,
       albumInfo?: { title: string; cover?: string; artistName?: string },
+      provider?: Provider,
     ) => {
-      navigate({ type: "album", albumId, albumInfo });
+      navigate({
+        type: "album",
+        albumId,
+        albumInfo,
+        ...providerField(provider),
+      });
     },
     [navigate],
   );
@@ -50,8 +61,14 @@ export function useNavigation() {
         numberOfVideos?: number;
         isUserPlaylist?: boolean;
       },
+      provider?: Provider,
     ) => {
-      navigate({ type: "playlist", playlistId, playlistInfo });
+      navigate({
+        type: "playlist",
+        playlistId,
+        playlistInfo,
+        ...providerField(provider),
+      });
     },
     [navigate],
   );
@@ -65,8 +82,8 @@ export function useNavigation() {
   }, [navigate]);
 
   const navigateToSearch = useCallback(
-    (query: string) => {
-      navigate({ type: "search", query });
+    (query: string, provider?: Provider) => {
+      navigate({ type: "search", query, ...providerField(provider) });
     },
     [navigate],
   );
@@ -79,8 +96,17 @@ export function useNavigation() {
   );
 
   const navigateToArtist = useCallback(
-    (artistId: number, artistInfo?: { name: string; picture?: string }) => {
-      navigate({ type: "artist", artistId, artistInfo });
+    (
+      artistId: number,
+      artistInfo?: { name: string; picture?: string },
+      provider?: Provider,
+    ) => {
+      navigate({
+        type: "artist",
+        artistId,
+        artistInfo,
+        ...providerField(provider),
+      });
     },
     [navigate],
   );
@@ -156,6 +182,7 @@ export function useNavigation() {
   );
 
   return {
+    navigateTo: navigate,
     navigateToAlbum,
     navigateToPlaylist,
     navigateToFavorites,

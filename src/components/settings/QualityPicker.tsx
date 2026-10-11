@@ -12,20 +12,31 @@ const TIERS = [
   },
 ] as const;
 
-export default function QualityPicker() {
-  const [maxQuality, setMaxQuality] = useAtom(maxQualityAtom);
+interface QualityTier<Id extends string> {
+  id: Id;
+  label: string;
+  spec: string;
+}
 
+/** Radio list of quality tiers — shared by the TIDAL and Deezer pickers. */
+export function TierPicker<Id extends string>({
+  tiers,
+  value,
+  onSelect,
+}: {
+  tiers: readonly QualityTier<Id>[];
+  value: string;
+  onSelect: (id: Id) => void;
+}) {
   return (
     <div className="rounded-[15px] bg-th-surface border border-th-border-subtle overflow-hidden">
-      {TIERS.map((t) => {
-        const sel = maxQuality === t.id;
+      {tiers.map((t) => {
+        const sel = value === t.id;
         return (
           <button
             key={t.id}
-            onClick={() => {
-              setMaxQuality(t.id);
-              invoke("set_max_quality", { quality: t.id }).catch(() => {});
-            }}
+            aria-pressed={sel}
+            onClick={() => onSelect(t.id)}
             style={
               sel
                 ? {
@@ -66,5 +77,20 @@ export default function QualityPicker() {
         );
       })}
     </div>
+  );
+}
+
+export default function QualityPicker() {
+  const [maxQuality, setMaxQuality] = useAtom(maxQualityAtom);
+
+  return (
+    <TierPicker
+      tiers={TIERS}
+      value={maxQuality}
+      onSelect={(id) => {
+        setMaxQuality(id);
+        invoke("set_max_quality", { quality: id }).catch(() => {});
+      }}
+    />
   );
 }

@@ -30,6 +30,16 @@ import {
 } from "../atoms/auth";
 import { userPlaylistsAtom, deletedPlaylistIdsAtom } from "../atoms/playlists";
 import {
+  deezerAuthCheckingAtom,
+  deezerFavoriteTrackIdsAtom,
+  deezerQualityAtom,
+  deezerUserAtom,
+} from "../atoms/deezer";
+import { deezerRestoreSession, getDeezerQuality } from "../api/deezer";
+import { loadDeezerFavoriteIds } from "../hooks/useDeezer";
+import { isDeezer } from "../lib/provider";
+import { getDeezerShareUrl } from "../lib/deezerSources";
+import {
   favoriteTrackIdsAtom,
   favoriteVideoIdsAtom,
   favoriteAlbumIdsAtom,
@@ -217,7 +227,7 @@ export function AppInitializer() {
   } = usePlaybackActions();
   const pendingNextRef = useRef<PendingNext | null>(null);
   useGaplessPrefetch(predictNextTrack, pendingNextRef);
-  const { addFavoriteTrack, removeFavoriteTrack, favoriteTrackIds } =
+  const { addFavoriteTrack, removeFavoriteTrack, isTrackFavorite } =
     useFavorites();
   useMcpBridge();
   useOverlayBridge();
@@ -276,6 +286,85 @@ export function AppInitializer() {
   }, []);
 
   // ================================================================
+  //  BACKEND SETTINGS (one-time, non-blocking, backend-authoritative)
+  //  Independent of which service is signed in: a Deezer-only session
+  //  plays through the same exclusive / bit-perfect / gapless pipeline.
+  // ================================================================
+  useEffect(() => {
+    invoke<boolean>("get_exclusive_mode")
+      .then((v) => store.set(exclusiveModeAtom, v))
+      .catch(() => {});
+    invoke<boolean>("get_bit_perfect")
+      .then((v) => store.set(bitPerfectAtom, v))
+      .catch(() => {});
+    invoke<boolean>("get_gapless")
+      .then((v) => store.set(gaplessAtom, v))
+      .catch(() => {});
+    invoke<string>("get_max_quality")
+      .then((v) => store.set(maxQualityAtom, v))
+      .catch(() => {});
+    invoke<string | null>("get_exclusive_device")
+      .then((v) => store.set(exclusiveDeviceAtom, v))
+      .catch(() => {});
+    invoke<boolean>("get_volume_normalization")
+      .then((v) => store.set(volumeNormalizationAtom, v))
+      .catch(() => {});
+    invoke<ProxySettings>("get_proxy_settings")
+      .then((v) => store.set(proxySettingsAtom, v))
+      .catch(() => {});
+    getDeezerQuality()
+      .then((q) => store.set(deezerQualityAtom, q))
+      .catch(() => {});
+  }, [store]);
+
+  // ================================================================
+  //  DEEZER SESSION RESTORE (one-time) — the stored ARL, if any.
+  //  Runs alongside the TIDAL restore; either session alone is enough
+  //  to enter the app.
+  // ================================================================
+  useEffect(() => {
+    deezerRestoreSession()
+      .then((user) => {
+        store.set(deezerUserAtom, user ?? null);
+        if (user) loadDeezerFavoriteIds(store);
+      })
+      .catch((err) => {
+        console.error("Failed to restore Deezer session:", err);
+        store.set(deezerUserAtom, null);
+      })
+      .finally(() => store.set(deezerAuthCheckingAtom, false));
+  }, [store]);
+
+  // ================================================================
+  //  DEEZER QUALITY FALLBACK — the requested quality was not offered
+  //  (subscription or track), the backend stepped down.
+  // ================================================================
+  useEffect(() => {
+    const label = (q: string) =>
+      q === "FLAC"
+        ? "FLAC"
+        : q === "MP3_320"
+          ? "MP3 320"
+          : q === "MP3_128"
+            ? "MP3 128"
+            : q;
+    const unlisten = listen<{
+      trackId: number;
+      requested: string;
+      actual: string;
+    }>("deezer-quality-fallback", (event) => {
+      const { requested, actual } = event.payload;
+      showToast(
+        `${label(requested)} not available on Deezer for this track — playing ${label(actual)}`,
+        "info",
+      );
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [showToast]);
+
+  // ================================================================
   //  AUTH LOADING (one-time)
   // ================================================================
   useEffect(() => {
@@ -318,29 +407,6 @@ export function AppInitializer() {
 
         // User name is fetched in the [isAuthenticated]-keyed preload effect
         // below so it re-populates on in-session re-login, not just startup.
-
-        // Exclusive mode settings (non-blocking, backend-authoritative)
-        invoke<boolean>("get_exclusive_mode")
-          .then((v) => store.set(exclusiveModeAtom, v))
-          .catch(() => {});
-        invoke<boolean>("get_bit_perfect")
-          .then((v) => store.set(bitPerfectAtom, v))
-          .catch(() => {});
-        invoke<boolean>("get_gapless")
-          .then((v) => store.set(gaplessAtom, v))
-          .catch(() => {});
-        invoke<string>("get_max_quality")
-          .then((v) => store.set(maxQualityAtom, v))
-          .catch(() => {});
-        invoke<string | null>("get_exclusive_device")
-          .then((v) => store.set(exclusiveDeviceAtom, v))
-          .catch(() => {});
-        invoke<boolean>("get_volume_normalization")
-          .then((v) => store.set(volumeNormalizationAtom, v))
-          .catch(() => {});
-        invoke<ProxySettings>("get_proxy_settings")
-          .then((v) => store.set(proxySettingsAtom, v))
-          .catch(() => {});
 
         // Playlists (via folders endpoint)
         try {
@@ -909,6 +975,12 @@ export function AppInitializer() {
         // can contain the same id twice (distinct _qid).
         const qidOf = (t: Track) =>
           (t as { _qid?: string })._qid ?? String(t.id);
+        // Look the advanced track up before the reconcile below removes it:
+        // a stash miss needs its provider (and, for Deezer, the track itself).
+        const advanced =
+          [...store.get(manualQueueAtom), ...store.get(queueAtom)].find(
+            (t) => qidOf(t) === qid,
+          ) ?? null;
         const removeAt = (arr: Track[], i: number) => [
           ...arr.slice(0, i),
           ...arr.slice(i + 1),
@@ -945,6 +1017,10 @@ export function AppInitializer() {
 
         if (pending && pending.trackId === trackId) {
           advanceToTrack(pending.track, pending.streamInfo);
+        } else if (advanced && isDeezer(advanced)) {
+          // No TIDAL lookup for a Deezer id; adopt the queued track. The
+          // signal-path heartbeat fills in the format.
+          advanceToTrack(advanced, { url: "", trackId });
         } else {
           // Rare: stash missing/mismatched but audio IS already playing trackId (audio reality
           // wins). Use the PURE get_stream_info — NOT set_next_track (which would re-arm the
@@ -1192,7 +1268,10 @@ export function AppInitializer() {
       if (!track) return;
       if (store.get(currentVideoAtom)) return; // video is current → don't overwrite MPRIS with audio metadata
       const streamInfo = store.get(streamInfoAtom);
-      const favoriteIds = store.get(favoriteTrackIdsAtom);
+      const deezer = isDeezer(track);
+      const favoriteIds = store.get(
+        deezer ? deezerFavoriteTrackIdsAtom : favoriteTrackIdsAtom,
+      );
       // Track.album has no artist field; fall back to track's own artist.
       const albumArtistName = track.artist?.name || "";
       invoke("update_mpris_metadata", {
@@ -1205,7 +1284,9 @@ export function AppInitializer() {
           durationSecs: track.duration,
           // tidal:// so xesam:url matches advertised SupportedUriSchemes.
           // Share URL stays Discord-only via the separate quality_text path.
-          url: `tidal://track/${track.id}`,
+          url: deezer
+            ? getDeezerShareUrl("track", track.id)
+            : `tidal://track/${track.id}`,
           qualityText: formatStreamQuality(streamInfo),
           albumArtist: albumArtistName || null,
           trackNumber: track.trackNumber ?? null,
@@ -1225,10 +1306,12 @@ export function AppInitializer() {
     const unsubTrack = store.sub(currentTrackAtom, pushMetadata);
     const unsubStream = store.sub(streamInfoAtom, pushMetadata);
     const unsubFav = store.sub(favoriteTrackIdsAtom, pushMetadata);
+    const unsubDeezerFav = store.sub(deezerFavoriteTrackIdsAtom, pushMetadata);
     return () => {
       unsubTrack();
       unsubStream();
       unsubFav();
+      unsubDeezerFav();
     };
   }, [store]);
 
@@ -1362,10 +1445,10 @@ export function AppInitializer() {
     likeToggle: () => {
       const track = store.get(currentTrackAtom);
       if (!track) return;
-      if (favoriteTrackIds.has(track.id)) {
-        removeFavoriteTrack(track.id);
+      if (isTrackFavorite(track)) {
+        void removeFavoriteTrack(track.id, track).catch(() => {});
       } else {
-        addFavoriteTrack(track.id, track);
+        void addFavoriteTrack(track.id, track).catch(() => {});
       }
     },
     toggleShuffle,

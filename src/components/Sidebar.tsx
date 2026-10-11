@@ -64,6 +64,8 @@ import {
 import { sidebarCollapsedAtom, feedUnseenCountAtom } from "../atoms/ui";
 import { currentViewAtom } from "../atoms/navigation";
 import AiBadge from "./AiBadge";
+import DeezerSidebarSection from "./deezer/DeezerSidebarSection";
+import { deezerUserAtom } from "../atoms/deezer";
 
 export default function Sidebar() {
   const {
@@ -80,7 +82,8 @@ export default function Sidebar() {
   } = useNavigation();
   const currentView = useAtomValue(currentViewAtom);
   const feedUnseenCount = useAtomValue(feedUnseenCountAtom);
-  const { authTokens } = useAuth();
+  const { authTokens, isAuthenticated: tidalSignedIn } = useAuth();
+  const deezerSignedIn = !!useAtomValue(deezerUserAtom);
   const [isCollapsed, setIsCollapsed] = useAtom(sidebarCollapsedAtom);
   const [activeFilter, setActiveFilter] = useState<
     "playlists" | "albums" | "artists" | "mixes"
@@ -442,318 +445,492 @@ export default function Sidebar() {
           <Home size={20} strokeWidth={2} />
           {!isCollapsed && <span className="font-semibold text-sm">Home</span>}
         </button>
-        <button
-          onClick={navigateToExplore}
-          className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-md transition-colors duration-150 group ${
-            currentView.type === "explore" || currentView.type === "explorePage"
-              ? "text-th-text-primary bg-th-hl-med"
-              : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-border-subtle"
-          } ${isCollapsed ? "justify-center px-0" : ""}`}
-          title="Explore"
-        >
-          <Compass size={20} strokeWidth={2} />
-          {!isCollapsed && (
-            <span className="font-semibold text-sm">Explore</span>
-          )}
-        </button>
-        <button
-          onClick={navigateToFeed}
-          className={`relative w-full flex items-center gap-3 px-2.5 py-2.5 rounded-md transition-colors duration-150 group ${
-            currentView.type === "feed"
-              ? "text-th-text-primary bg-th-hl-med"
-              : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-border-subtle"
-          } ${isCollapsed ? "justify-center px-0" : ""}`}
-          title="Feed"
-        >
-          <span className="relative">
-            <Bell size={20} strokeWidth={2} />
-            {feedUnseenCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-th-accent ring-2 ring-th-sidebar" />
-            )}
-          </span>
-          {!isCollapsed && <span className="font-semibold text-sm">Feed</span>}
-        </button>
+        {tidalSignedIn && (
+          <>
+            <button
+              onClick={navigateToExplore}
+              className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-md transition-colors duration-150 group ${
+                currentView.type === "explore" ||
+                currentView.type === "explorePage"
+                  ? "text-th-text-primary bg-th-hl-med"
+                  : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-border-subtle"
+              } ${isCollapsed ? "justify-center px-0" : ""}`}
+              title="Explore"
+            >
+              <Compass size={20} strokeWidth={2} />
+              {!isCollapsed && (
+                <span className="font-semibold text-sm">Explore</span>
+              )}
+            </button>
+            <button
+              onClick={navigateToFeed}
+              className={`relative w-full flex items-center gap-3 px-2.5 py-2.5 rounded-md transition-colors duration-150 group ${
+                currentView.type === "feed"
+                  ? "text-th-text-primary bg-th-hl-med"
+                  : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-border-subtle"
+              } ${isCollapsed ? "justify-center px-0" : ""}`}
+              title="Feed"
+            >
+              <span className="relative">
+                <Bell size={20} strokeWidth={2} />
+                {feedUnseenCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-th-accent ring-2 ring-th-sidebar" />
+                )}
+              </span>
+              {!isCollapsed && (
+                <span className="font-semibold text-sm">Feed</span>
+              )}
+            </button>
+          </>
+        )}
       </nav>
 
-      {/* Library Header */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <div
-          className={`px-2 py-1.5 flex items-center ${
-            isCollapsed ? "justify-center" : "justify-between"
-          }`}
-        >
-          <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className={`flex items-center gap-3 px-2.5 py-2 text-th-text-secondary hover:text-th-text-primary transition-colors duration-150 group ${
-              isCollapsed ? "justify-center w-full px-0" : ""
+      {deezerSignedIn && (
+        <DeezerSidebarSection collapsed={isCollapsed} fill={!tidalSignedIn} />
+      )}
+
+      {/* Library Header (TIDAL) */}
+      {tidalSignedIn && (
+        <div className="flex-1 flex flex-col min-h-0">
+          <div
+            className={`px-2 py-1.5 flex items-center ${
+              isCollapsed ? "justify-center" : "justify-between"
             }`}
           >
-            <Library size={20} />
+            <button
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className={`flex items-center gap-3 px-2.5 py-2 text-th-text-secondary hover:text-th-text-primary transition-colors duration-150 group ${
+                isCollapsed ? "justify-center w-full px-0" : ""
+              }`}
+            >
+              <Library size={20} />
+              {!isCollapsed && (
+                <span className="font-semibold text-sm">Your Library</span>
+              )}
+            </button>
             {!isCollapsed && (
-              <span className="font-semibold text-sm">Your Library</span>
-            )}
-          </button>
-          {!isCollapsed && (
-            <div className="flex items-center gap-1">
-              <SortDropdown
-                libraryType={activeFilter}
-                currentSort={
-                  activeFilter === "playlists"
-                    ? playlistSort
-                    : activeFilter === "albums"
-                      ? albumSort
-                      : activeFilter === "artists"
-                        ? artistSort
-                        : mixSort
-                }
-                onSortChange={
-                  activeFilter === "playlists"
-                    ? setPlaylistSort
-                    : activeFilter === "albums"
-                      ? setAlbumSort
-                      : activeFilter === "artists"
-                        ? setArtistSort
-                        : setMixSort
-                }
-                compact
-              />
-              <button
-                onClick={() => navigateToLibraryViewAll(activeFilter)}
-                className="text-xs text-th-text-muted hover:text-th-text-primary transition-colors px-2.5"
-              >
-                Show all
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Filter Pills */}
-        {!isCollapsed && (
-          <div className="px-2 pb-2 flex gap-1.5 overflow-x-auto no-scrollbar">
-            {(["playlists", "albums", "artists", "mixes"] as const).map(
-              (tab) => (
+              <div className="flex items-center gap-1">
+                <SortDropdown
+                  libraryType={activeFilter}
+                  currentSort={
+                    activeFilter === "playlists"
+                      ? playlistSort
+                      : activeFilter === "albums"
+                        ? albumSort
+                        : activeFilter === "artists"
+                          ? artistSort
+                          : mixSort
+                  }
+                  onSortChange={
+                    activeFilter === "playlists"
+                      ? setPlaylistSort
+                      : activeFilter === "albums"
+                        ? setAlbumSort
+                        : activeFilter === "artists"
+                          ? setArtistSort
+                          : setMixSort
+                  }
+                  compact
+                />
                 <button
-                  key={tab}
-                  onClick={() => setActiveFilter(tab)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors duration-150 ${
-                    activeFilter === tab
-                      ? "bg-th-accent/15 text-th-accent"
-                      : "bg-th-hl-med hover:bg-th-inset text-th-text-secondary"
-                  }`}
+                  onClick={() => navigateToLibraryViewAll(activeFilter)}
+                  className="text-xs text-th-text-muted hover:text-th-text-primary transition-colors px-2.5"
                 >
-                  {tab === "playlists"
-                    ? "Playlists"
-                    : tab === "albums"
-                      ? "Albums"
-                      : tab === "artists"
-                        ? "Artists"
-                        : "Mixes"}
-                </button>
-              ),
-            )}
-          </div>
-        )}
-
-        {/* Library List */}
-        <div className="flex-1 overflow-y-auto px-1.5 pb-2 custom-scrollbar">
-          {activeFilter === "playlists" ? (
-            /* Playlists view */
-            playlistsLoading ? (
-              <SidebarSkeleton count={5} />
-            ) : visiblePlaylistItems.length === 0 ? (
-              <div
-                className={`px-3 py-8 text-center ${isCollapsed ? "hidden" : ""}`}
-              >
-                <p className="text-th-text-muted text-sm">
-                  Create your first playlist
-                </p>
-                <button
-                  onClick={() => setShowCreateModal(true)}
-                  className="mt-4 px-4 py-2 bg-th-text-primary text-th-base rounded-full text-sm font-bold hover:scale-105 transition-transform"
-                >
-                  Create playlist
+                  Show all
                 </button>
               </div>
-            ) : (
-              <div className="space-y-px">
-                {/* Loved Tracks - pinned at top */}
-                <button
-                  onClick={navigateToFavorites}
-                  className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
-                    currentView.type === "favorites"
-                      ? "bg-th-hl-med"
-                      : "hover:bg-th-border-subtle"
-                  } ${isCollapsed ? "justify-center" : ""}`}
-                  title="Loved Tracks"
-                >
-                  <div
-                    className={`shrink-0 overflow-hidden flex items-center justify-center bg-gradient-to-br from-[#450af5] via-[#8e2de2] to-[#00d2ff] ${
-                      isCollapsed ? "w-10 h-10 rounded" : "w-10 h-10 rounded"
+            )}
+          </div>
+
+          {/* Filter Pills */}
+          {!isCollapsed && (
+            <div className="px-2 pb-2 flex gap-1.5 overflow-x-auto no-scrollbar">
+              {(["playlists", "albums", "artists", "mixes"] as const).map(
+                (tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveFilter(tab)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors duration-150 ${
+                      activeFilter === tab
+                        ? "bg-th-accent/15 text-th-accent"
+                        : "bg-th-hl-med hover:bg-th-inset text-th-text-secondary"
                     }`}
                   >
-                    <Heart size={15} className="text-white" fill="white" />
-                  </div>
+                    {tab === "playlists"
+                      ? "Playlists"
+                      : tab === "albums"
+                        ? "Albums"
+                        : tab === "artists"
+                          ? "Artists"
+                          : "Mixes"}
+                  </button>
+                ),
+              )}
+            </div>
+          )}
 
-                  {!isCollapsed && (
-                    <div className="flex-1 min-w-0 text-left">
-                      <div className="text-[13px] font-medium text-th-text-primary truncate leading-tight">
-                        Loved Tracks
-                      </div>
-                      <div className="text-[11px] text-th-text-faint truncate leading-tight mt-0.5">
-                        Collection
-                      </div>
+          {/* Library List */}
+          <div className="flex-1 overflow-y-auto px-1.5 pb-2 custom-scrollbar">
+            {activeFilter === "playlists" ? (
+              /* Playlists view */
+              playlistsLoading ? (
+                <SidebarSkeleton count={5} />
+              ) : visiblePlaylistItems.length === 0 ? (
+                <div
+                  className={`px-3 py-8 text-center ${isCollapsed ? "hidden" : ""}`}
+                >
+                  <p className="text-th-text-muted text-sm">
+                    Create your first playlist
+                  </p>
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    className="mt-4 px-4 py-2 bg-th-text-primary text-th-base rounded-full text-sm font-bold hover:scale-105 transition-transform"
+                  >
+                    Create playlist
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-px">
+                  {/* Loved Tracks - pinned at top */}
+                  <button
+                    onClick={navigateToFavorites}
+                    className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
+                      currentView.type === "favorites"
+                        ? "bg-th-hl-med"
+                        : "hover:bg-th-border-subtle"
+                    } ${isCollapsed ? "justify-center" : ""}`}
+                    title="Loved Tracks"
+                  >
+                    <div
+                      className={`shrink-0 overflow-hidden flex items-center justify-center bg-gradient-to-br from-[#450af5] via-[#8e2de2] to-[#00d2ff] ${
+                        isCollapsed ? "w-10 h-10 rounded" : "w-10 h-10 rounded"
+                      }`}
+                    >
+                      <Heart size={15} className="text-white" fill="white" />
                     </div>
-                  )}
-                </button>
 
-                {visiblePlaylistItems.map((entry) => {
-                  if (entry.kind === "folder") {
-                    const folderName =
-                      renamedFolders.get(entry.data.id) ?? entry.data.name;
+                    {!isCollapsed && (
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="text-[13px] font-medium text-th-text-primary truncate leading-tight">
+                          Loved Tracks
+                        </div>
+                        <div className="text-[11px] text-th-text-faint truncate leading-tight mt-0.5">
+                          Collection
+                        </div>
+                      </div>
+                    )}
+                  </button>
+
+                  {visiblePlaylistItems.map((entry) => {
+                    if (entry.kind === "folder") {
+                      const folderName =
+                        renamedFolders.get(entry.data.id) ?? entry.data.name;
+                      return (
+                        <button
+                          key={entry.data.id}
+                          onClick={() =>
+                            navigateToPlaylistFolder(entry.data.id, folderName)
+                          }
+                          onContextMenu={(e) =>
+                            handleFolderContextMenu(e, {
+                              ...entry.data,
+                              name: folderName,
+                            })
+                          }
+                          className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group hover:bg-th-border-subtle ${isCollapsed ? "justify-center" : ""}`}
+                          title={folderName}
+                        >
+                          <div
+                            className={`bg-th-surface-hover shrink-0 overflow-hidden rounded flex items-center justify-center ${isCollapsed ? "w-10 h-10" : "w-10 h-10"}`}
+                          >
+                            <FolderOpen
+                              size={18}
+                              className="text-th-text-faint"
+                            />
+                          </div>
+                          {!isCollapsed && (
+                            <div className="flex-1 min-w-0 text-left">
+                              <div className="text-[14px] font-medium text-th-text-primary truncate leading-snug">
+                                {folderName}
+                              </div>
+                              <div className="text-[12px] text-th-text-faint truncate leading-snug mt-0.5">
+                                {folderSubtitle(
+                                  (entry.data.totalNumberOfItems ?? 0) +
+                                    (countAdjustments.get(entry.data.id) ?? 0),
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </button>
+                      );
+                    }
+
+                    const playlistUpdate = updatedPlaylists.get(
+                      entry.data.uuid,
+                    );
+                    const playlist = playlistUpdate
+                      ? { ...entry.data, title: playlistUpdate.title }
+                      : entry.data;
+                    const own = isOwnPlaylist(playlist);
+                    const trackCount = playlist.numberOfTracks;
+                    const creatorLabel = own ? "You" : getCreatorName(playlist);
+                    const countLabel =
+                      trackCount != null
+                        ? playlistCountLabel(
+                            playlist.numberOfTracks,
+                            playlist.numberOfVideos,
+                          )
+                        : "";
+                    let subtitle = [creatorLabel, countLabel]
+                      .filter(Boolean)
+                      .join(" \u00B7 ");
+                    if (!subtitle) {
+                      subtitle = "Playlist";
+                    }
+
                     return (
                       <button
-                        key={entry.data.id}
-                        onClick={() =>
-                          navigateToPlaylistFolder(entry.data.id, folderName)
-                        }
+                        key={playlist.uuid}
+                        onClick={() => handlePlaylistClick(playlist)}
                         onContextMenu={(e) =>
-                          handleFolderContextMenu(e, {
-                            ...entry.data,
-                            name: folderName,
-                          })
+                          handlePlaylistContextMenu(e, playlist)
                         }
-                        className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group hover:bg-th-border-subtle ${isCollapsed ? "justify-center" : ""}`}
-                        title={folderName}
+                        className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
+                          currentView.type === "playlist" &&
+                          currentView.playlistId === playlist.uuid
+                            ? "bg-th-hl-med"
+                            : "hover:bg-th-border-subtle"
+                        } ${isCollapsed ? "justify-center" : ""}`}
+                        title={playlist.title}
                       >
                         <div
-                          className={`bg-th-surface-hover shrink-0 overflow-hidden rounded flex items-center justify-center ${isCollapsed ? "w-10 h-10" : "w-10 h-10"}`}
+                          className={`bg-th-surface-hover shrink-0 overflow-hidden rounded ${isCollapsed ? "w-10 h-10" : "w-10 h-10"}`}
                         >
-                          <FolderOpen
-                            size={18}
-                            className="text-th-text-faint"
+                          <TidalImage
+                            src={getTidalImageUrl(playlist.image, 80)}
+                            alt={playlist.title}
+                            type="playlist"
                           />
                         </div>
                         {!isCollapsed && (
                           <div className="flex-1 min-w-0 text-left">
                             <div className="text-[14px] font-medium text-th-text-primary truncate leading-snug">
-                              {folderName}
+                              {playlist.title}
                             </div>
                             <div className="text-[12px] text-th-text-faint truncate leading-snug mt-0.5">
-                              {folderSubtitle(
-                                (entry.data.totalNumberOfItems ?? 0) +
-                                  (countAdjustments.get(entry.data.id) ?? 0),
-                              )}
+                              {subtitle}
                             </div>
                           </div>
                         )}
                       </button>
                     );
-                  }
-
-                  const playlistUpdate = updatedPlaylists.get(entry.data.uuid);
-                  const playlist = playlistUpdate
-                    ? { ...entry.data, title: playlistUpdate.title }
-                    : entry.data;
-                  const own = isOwnPlaylist(playlist);
-                  const trackCount = playlist.numberOfTracks;
-                  const creatorLabel = own ? "You" : getCreatorName(playlist);
-                  const countLabel =
-                    trackCount != null
-                      ? playlistCountLabel(
-                          playlist.numberOfTracks,
-                          playlist.numberOfVideos,
-                        )
-                      : "";
-                  let subtitle = [creatorLabel, countLabel]
-                    .filter(Boolean)
-                    .join(" \u00B7 ");
-                  if (!subtitle) {
-                    subtitle = "Playlist";
-                  }
-
-                  return (
+                  })}
+                  {playlistsHasMore && <div ref={playlistsSentinelRef} />}
+                  {playlistsLoadingMore && <SidebarSkeleton count={2} />}
+                </div>
+              )
+            ) : activeFilter === "albums" ? (
+              /* Albums view */
+              albumsLoading ? (
+                <SidebarSkeleton count={5} />
+              ) : allAlbums.length === 0 ? (
+                <div
+                  className={`px-3 py-8 text-center ${isCollapsed ? "hidden" : ""}`}
+                >
+                  <p className="text-th-text-muted text-sm">
+                    No favorite albums yet
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-px">
+                  {allAlbums.map((album) => (
                     <button
-                      key={playlist.uuid}
-                      onClick={() => handlePlaylistClick(playlist)}
-                      onContextMenu={(e) =>
-                        handlePlaylistContextMenu(e, playlist)
+                      key={album.id}
+                      onClick={() =>
+                        navigateToAlbum(album.id, {
+                          title: album.title,
+                          cover: album.cover,
+                          artistName: album.artist?.name,
+                        })
                       }
                       className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
-                        currentView.type === "playlist" &&
-                        currentView.playlistId === playlist.uuid
+                        currentView.type === "album" &&
+                        currentView.albumId === album.id
                           ? "bg-th-hl-med"
                           : "hover:bg-th-border-subtle"
                       } ${isCollapsed ? "justify-center" : ""}`}
-                      title={playlist.title}
+                      title={album.title}
                     >
                       <div
-                        className={`bg-th-surface-hover shrink-0 overflow-hidden rounded ${isCollapsed ? "w-10 h-10" : "w-10 h-10"}`}
+                        className={`bg-th-surface-hover shrink-0 overflow-hidden rounded ${
+                          isCollapsed ? "w-10 h-10" : "w-10 h-10"
+                        }`}
                       >
-                        <TidalImage
-                          src={getTidalImageUrl(playlist.image, 80)}
-                          alt={playlist.title}
-                          type="playlist"
-                        />
+                        {album.cover ? (
+                          <TidalImage
+                            src={getTidalImageUrl(album.cover, 80)}
+                            alt={album.title}
+                            type="album"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Music size={16} className="text-th-text-faint" />
+                          </div>
+                        )}
                       </div>
+
                       {!isCollapsed && (
                         <div className="flex-1 min-w-0 text-left">
-                          <div className="text-[14px] font-medium text-th-text-primary truncate leading-snug">
-                            {playlist.title}
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="text-[14px] font-medium text-th-text-primary truncate leading-snug">
+                              {album.title}
+                            </div>
+                            {album.ai && <AiBadge />}
                           </div>
                           <div className="text-[12px] text-th-text-faint truncate leading-snug mt-0.5">
-                            {subtitle}
+                            {getTrackArtistDisplay(album)}
                           </div>
                         </div>
                       )}
                     </button>
-                  );
-                })}
-                {playlistsHasMore && <div ref={playlistsSentinelRef} />}
-                {playlistsLoadingMore && <SidebarSkeleton count={2} />}
-              </div>
-            )
-          ) : activeFilter === "albums" ? (
-            /* Albums view */
-            albumsLoading ? (
+                  ))}
+                  {albumsHasMore && <div ref={albumsSentinelRef} />}
+                  {albumsLoadingMore && <SidebarSkeleton count={2} />}
+                </div>
+              )
+            ) : activeFilter === "artists" ? (
+              /* Artists view */
+              artistsLoading ? (
+                <SidebarSkeleton count={5} />
+              ) : allArtists.length === 0 ? (
+                <div
+                  className={`px-3 py-8 text-center ${isCollapsed ? "hidden" : ""}`}
+                >
+                  <p className="text-th-text-muted text-sm">
+                    No followed artists yet
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-px">
+                  {allArtists.map((artist) => (
+                    <button
+                      key={artist.id}
+                      onClick={() =>
+                        navigateToArtist(artist.id, {
+                          name: artist.name,
+                          picture: artist.picture,
+                        })
+                      }
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setContextMenu({
+                          item: {
+                            type: "artist",
+                            id: artist.id,
+                            name: artist.name,
+                            picture: artist.picture,
+                          },
+                          position: { x: e.clientX, y: e.clientY },
+                        });
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
+                        currentView.type === "artist" &&
+                        currentView.artistId === artist.id
+                          ? "bg-th-hl-med"
+                          : "hover:bg-th-border-subtle"
+                      } ${isCollapsed ? "justify-center" : ""}`}
+                      title={artist.name}
+                    >
+                      <div
+                        className={`bg-th-surface-hover shrink-0 overflow-hidden rounded-full ${
+                          isCollapsed ? "w-10 h-10" : "w-10 h-10"
+                        }`}
+                      >
+                        {getArtistImage(artist, 160) ? (
+                          <TidalImage
+                            src={getArtistImage(artist, 160)}
+                            alt={artist.name}
+                            type="artist"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <User size={16} className="text-th-text-faint" />
+                          </div>
+                        )}
+                      </div>
+
+                      {!isCollapsed && (
+                        <div className="flex-1 min-w-0 text-left">
+                          <div className="text-[14px] font-medium text-th-text-primary truncate leading-snug">
+                            {artist.name}
+                          </div>
+                          <div className="text-[12px] text-th-text-faint truncate leading-snug mt-0.5">
+                            Artist
+                          </div>
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                  {artistsHasMore && <div ref={artistsSentinelRef} />}
+                  {artistsLoadingMore && <SidebarSkeleton count={2} />}
+                </div>
+              )
+            ) : /* Mixes view */
+            mixesLoading ? (
               <SidebarSkeleton count={5} />
-            ) : allAlbums.length === 0 ? (
+            ) : allMixes.length === 0 ? (
               <div
                 className={`px-3 py-8 text-center ${isCollapsed ? "hidden" : ""}`}
               >
                 <p className="text-th-text-muted text-sm">
-                  No favorite albums yet
+                  No favorite mixes yet
                 </p>
               </div>
             ) : (
               <div className="space-y-px">
-                {allAlbums.map((album) => (
+                {allMixes.map((mix) => (
                   <button
-                    key={album.id}
+                    key={mix.id}
                     onClick={() =>
-                      navigateToAlbum(album.id, {
-                        title: album.title,
-                        cover: album.cover,
-                        artistName: album.artist?.name,
+                      navigateToMix(mix.id, {
+                        title: mix.title,
+                        image: mix.images?.MEDIUM?.url,
+                        subtitle: mix.subTitle,
+                        mixType: mix.mixType,
                       })
                     }
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setContextMenu({
+                        item: {
+                          type: "mix",
+                          mixId: mix.id,
+                          title: mix.title,
+                          image: mix.images?.MEDIUM?.url,
+                          subtitle: mix.subTitle,
+                        },
+                        position: { x: e.clientX, y: e.clientY },
+                      });
+                    }}
                     className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
-                      currentView.type === "album" &&
-                      currentView.albumId === album.id
+                      currentView.type === "mix" && currentView.mixId === mix.id
                         ? "bg-th-hl-med"
                         : "hover:bg-th-border-subtle"
                     } ${isCollapsed ? "justify-center" : ""}`}
-                    title={album.title}
+                    title={mix.title}
                   >
                     <div
                       className={`bg-th-surface-hover shrink-0 overflow-hidden rounded ${
                         isCollapsed ? "w-10 h-10" : "w-10 h-10"
                       }`}
                     >
-                      {album.cover ? (
-                        <TidalImage
-                          src={getTidalImageUrl(album.cover, 80)}
-                          alt={album.title}
-                          type="album"
+                      {mix.images?.SMALL?.url ? (
+                        <img
+                          src={mix.images.SMALL.url}
+                          alt={mix.title}
+                          className="w-full h-full object-cover"
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
@@ -764,182 +941,23 @@ export default function Sidebar() {
 
                     {!isCollapsed && (
                       <div className="flex-1 min-w-0 text-left">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <div className="text-[14px] font-medium text-th-text-primary truncate leading-snug">
-                            {album.title}
-                          </div>
-                          {album.ai && <AiBadge />}
-                        </div>
-                        <div className="text-[12px] text-th-text-faint truncate leading-snug mt-0.5">
-                          {getTrackArtistDisplay(album)}
-                        </div>
-                      </div>
-                    )}
-                  </button>
-                ))}
-                {albumsHasMore && <div ref={albumsSentinelRef} />}
-                {albumsLoadingMore && <SidebarSkeleton count={2} />}
-              </div>
-            )
-          ) : activeFilter === "artists" ? (
-            /* Artists view */
-            artistsLoading ? (
-              <SidebarSkeleton count={5} />
-            ) : allArtists.length === 0 ? (
-              <div
-                className={`px-3 py-8 text-center ${isCollapsed ? "hidden" : ""}`}
-              >
-                <p className="text-th-text-muted text-sm">
-                  No followed artists yet
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-px">
-                {allArtists.map((artist) => (
-                  <button
-                    key={artist.id}
-                    onClick={() =>
-                      navigateToArtist(artist.id, {
-                        name: artist.name,
-                        picture: artist.picture,
-                      })
-                    }
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setContextMenu({
-                        item: {
-                          type: "artist",
-                          id: artist.id,
-                          name: artist.name,
-                          picture: artist.picture,
-                        },
-                        position: { x: e.clientX, y: e.clientY },
-                      });
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
-                      currentView.type === "artist" &&
-                      currentView.artistId === artist.id
-                        ? "bg-th-hl-med"
-                        : "hover:bg-th-border-subtle"
-                    } ${isCollapsed ? "justify-center" : ""}`}
-                    title={artist.name}
-                  >
-                    <div
-                      className={`bg-th-surface-hover shrink-0 overflow-hidden rounded-full ${
-                        isCollapsed ? "w-10 h-10" : "w-10 h-10"
-                      }`}
-                    >
-                      {getArtistImage(artist, 160) ? (
-                        <TidalImage
-                          src={getArtistImage(artist, 160)}
-                          alt={artist.name}
-                          type="artist"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <User size={16} className="text-th-text-faint" />
-                        </div>
-                      )}
-                    </div>
-
-                    {!isCollapsed && (
-                      <div className="flex-1 min-w-0 text-left">
                         <div className="text-[14px] font-medium text-th-text-primary truncate leading-snug">
-                          {artist.name}
+                          {mix.title}
                         </div>
                         <div className="text-[12px] text-th-text-faint truncate leading-snug mt-0.5">
-                          Artist
+                          {mix.subTitle || "Mix"}
                         </div>
                       </div>
                     )}
                   </button>
                 ))}
-                {artistsHasMore && <div ref={artistsSentinelRef} />}
-                {artistsLoadingMore && <SidebarSkeleton count={2} />}
+                {mixesHasMore && <div ref={mixesSentinelRef} />}
+                {mixesLoadingMore && <SidebarSkeleton count={2} />}
               </div>
-            )
-          ) : /* Mixes view */
-          mixesLoading ? (
-            <SidebarSkeleton count={5} />
-          ) : allMixes.length === 0 ? (
-            <div
-              className={`px-3 py-8 text-center ${isCollapsed ? "hidden" : ""}`}
-            >
-              <p className="text-th-text-muted text-sm">
-                No favorite mixes yet
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-px">
-              {allMixes.map((mix) => (
-                <button
-                  key={mix.id}
-                  onClick={() =>
-                    navigateToMix(mix.id, {
-                      title: mix.title,
-                      image: mix.images?.MEDIUM?.url,
-                      subtitle: mix.subTitle,
-                      mixType: mix.mixType,
-                    })
-                  }
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setContextMenu({
-                      item: {
-                        type: "mix",
-                        mixId: mix.id,
-                        title: mix.title,
-                        image: mix.images?.MEDIUM?.url,
-                        subtitle: mix.subTitle,
-                      },
-                      position: { x: e.clientX, y: e.clientY },
-                    });
-                  }}
-                  className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
-                    currentView.type === "mix" && currentView.mixId === mix.id
-                      ? "bg-th-hl-med"
-                      : "hover:bg-th-border-subtle"
-                  } ${isCollapsed ? "justify-center" : ""}`}
-                  title={mix.title}
-                >
-                  <div
-                    className={`bg-th-surface-hover shrink-0 overflow-hidden rounded ${
-                      isCollapsed ? "w-10 h-10" : "w-10 h-10"
-                    }`}
-                  >
-                    {mix.images?.SMALL?.url ? (
-                      <img
-                        src={mix.images.SMALL.url}
-                        alt={mix.title}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Music size={16} className="text-th-text-faint" />
-                      </div>
-                    )}
-                  </div>
-
-                  {!isCollapsed && (
-                    <div className="flex-1 min-w-0 text-left">
-                      <div className="text-[14px] font-medium text-th-text-primary truncate leading-snug">
-                        {mix.title}
-                      </div>
-                      <div className="text-[12px] text-th-text-faint truncate leading-snug mt-0.5">
-                        {mix.subTitle || "Mix"}
-                      </div>
-                    </div>
-                  )}
-                </button>
-              ))}
-              {mixesHasMore && <div ref={mixesSentinelRef} />}
-              {mixesLoadingMore && <SidebarSkeleton count={2} />}
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Media context menu */}
       {contextMenu && (

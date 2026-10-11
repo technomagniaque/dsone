@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { useNavigation } from "../hooks/useNavigation";
+import type { Provider } from "../types";
 
 interface ArtistInfo {
   id: number;
@@ -18,6 +19,8 @@ interface TrackArtistsProps {
   fallback?: string;
   /** Called on click instead of default navigation (e.g. for NowPlayingDrawer's drawer-close-then-navigate) */
   onArtistClick?: (artist: ArtistInfo) => void;
+  /** Service the artists belong to; Deezer artists open the Deezer page. */
+  provider?: Provider;
 }
 
 /** Renders comma-separated, individually-clickable artist names. */
@@ -27,6 +30,7 @@ export const TrackArtists = memo(function TrackArtists({
   className = "",
   fallback = "Unknown Artist",
   onArtistClick,
+  provider,
 }: TrackArtistsProps) {
   const { navigateToArtist } = useNavigation();
 
@@ -47,7 +51,11 @@ export const TrackArtists = memo(function TrackArtists({
               if (onArtistClick) {
                 onArtistClick(a);
               } else if (a.id) {
-                navigateToArtist(a.id, { name: a.name, picture: a.picture });
+                navigateToArtist(
+                  a.id,
+                  { name: a.name, picture: a.picture },
+                  provider,
+                );
               }
             }}
           >

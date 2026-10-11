@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAtom } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { useAuth } from "../hooks/useAuth";
 import { isAuthenticatedAtom, authTokensAtom } from "../atoms/auth";
 import {
@@ -34,10 +34,12 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import type { AuthTokens } from "../types";
 import Icon from "./Icon";
+import DeezerLoginForm from "./deezer/DeezerLoginForm";
+import { deezerUserAtom } from "../atoms/deezer";
 
 type AuthMethod = "device" | "pkce" | "import";
 type SimpleTab = "pkce" | "loginCode";
-type View = "simple" | "advanced";
+type View = "simple" | "advanced" | "deezer";
 
 /** Check if a Tauri IPC error looks like a credential/auth rejection (401/403). */
 function isCredentialRelatedError(err: unknown): boolean {
@@ -82,6 +84,7 @@ export default function Login() {
   } = useAuth();
   const [, setAuthTokens] = useAtom(authTokensAtom);
   const [, setIsAuthenticated] = useAtom(isAuthenticatedAtom);
+  const deezerUser = useAtomValue(deezerUserAtom);
 
   const [view, setView] = useState<View>("simple");
   const [simpleTab, setSimpleTab] = useState<SimpleTab>("pkce");
@@ -720,6 +723,25 @@ export default function Login() {
               </div>
             )}
 
+            {!deezerUser && !status && (
+              <div className="mt-6 flex flex-col items-center gap-4">
+                <div className="flex items-center gap-3 w-full text-[11px] uppercase tracking-widest text-th-text-faint">
+                  <span className="flex-1 h-px bg-th-border-subtle" />
+                  or
+                  <span className="flex-1 h-px bg-th-border-subtle" />
+                </div>
+                <button
+                  onClick={() => {
+                    setError(null);
+                    setView("deezer");
+                  }}
+                  className="w-full px-6 py-3 bg-th-overlay border border-th-border-subtle text-th-text-primary font-bold rounded-full hover:bg-th-hl-faint transition-colors text-[15px]"
+                >
+                  Sign in with Deezer
+                </button>
+              </div>
+            )}
+
             <div className="mt-7 pt-4 border-t border-th-border-subtle/40">
               <button
                 onClick={() => {
@@ -733,6 +755,16 @@ export default function Login() {
                 <ChevronRight size={13} />
               </button>
             </div>
+          </>
+        )}
+
+        {/* ==================== Deezer (ARL) ==================== */}
+        {view === "deezer" && (
+          <>
+            <p className="text-th-text-muted mb-6 text-lg">
+              Connect your Deezer account
+            </p>
+            <DeezerLoginForm onCancel={() => setView("simple")} />
           </>
         )}
 

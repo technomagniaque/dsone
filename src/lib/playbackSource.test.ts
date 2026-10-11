@@ -23,9 +23,26 @@ describe("isNavigableSource", () => {
     expect(isNavigableSource(undefined)).toBe(false);
   });
 
-  it("exposes exactly the eight navigable types", () => {
+  it("treats every Deezer container as navigable", () => {
+    for (const type of [
+      "deezer-album",
+      "deezer-playlist",
+      "deezer-artist",
+      "deezer-favorites",
+      "deezer-flow",
+    ]) {
+      expect(isNavigableSource(type)).toBe(true);
+    }
+  });
+
+  it("exposes exactly the navigable TIDAL and Deezer types", () => {
     expect([...NAVIGABLE_SOURCE_TYPES].sort()).toEqual(
       [
+        "deezer-album",
+        "deezer-artist",
+        "deezer-favorites",
+        "deezer-flow",
+        "deezer-playlist",
         "album",
         "artist",
         "artist-tracks",

@@ -65,7 +65,9 @@ export default function MediaCard({
       : aspect === "promo"
         ? "aspect-[11/8]"
         : "aspect-square";
-  const image = isVideo ? getTidalImageUrl(item.imageId, 640) : getItemImage(item);
+  const image = isVideo
+    ? getTidalImageUrl(item.imageId, 640)
+    : getItemImage(item);
   const title = titleOverride || getItemTitle(item);
   const subtitle = subtitleOverride ?? getItemSubtitle(item, userId);
   const { allowAi } = useContentPrefs();
@@ -163,20 +165,22 @@ export default function MediaCard({
                     <MoreHorizontal size={16} className="text-white" />
                   </button>
                 )}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (onFavoriteToggle) onFavoriteToggle(e);
-                  }}
-                  className="w-8 h-8 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
-                >
-                  <Heart
-                    size={16}
-                    className={isFavorited ? "text-th-accent" : "text-white"}
-                    fill={isFavorited ? "currentColor" : "none"}
-                    strokeWidth={isFavorited ? 0 : 2}
-                  />
-                </button>
+                {onFavoriteToggle && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFavoriteToggle(e);
+                    }}
+                    className="w-8 h-8 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
+                  >
+                    <Heart
+                      size={16}
+                      className={isFavorited ? "text-th-accent" : "text-white"}
+                      fill={isFavorited ? "currentColor" : "none"}
+                      strokeWidth={isFavorited ? 0 : 2}
+                    />
+                  </button>
+                )}
               </div>
             )}
           </>
