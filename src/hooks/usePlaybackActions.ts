@@ -132,6 +132,8 @@ function buildTrackStartedPayload(
     // Container the play started from, for TIDAL play-reporting attribution.
     sourceType: deezer ? null : (source?.type ?? null),
     sourceId: deezer || source == null ? null : String(source.id),
+    // The backend refuses to report a "deezer" play to TIDAL.
+    provider: deezer ? "deezer" : "tidal",
   };
 }
 

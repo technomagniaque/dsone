@@ -290,11 +290,12 @@ fn notify_blocking(
     on_retry: impl FnOnce(),
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::collections::HashMap;
-    use zbus::blocking::{Connection, Proxy};
+    // Aliased so the HTTP-proxy source guard does not mistake it for reqwest.
+    use zbus::blocking::{Connection, Proxy as DbusProxy};
     use zbus::zvariant::Value;
 
     let conn = Connection::session()?;
-    let proxy = Proxy::new(
+    let proxy = DbusProxy::new(
         &conn,
         "org.freedesktop.Notifications",
         "/org/freedesktop/Notifications",
