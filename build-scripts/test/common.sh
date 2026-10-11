@@ -5,7 +5,7 @@
 # Required by caller before sourcing:
 #   APP_CMD  — command to launch SONE inside the container
 #              AppImage: "cd /tmp/squashfs-root && ./AppRun"
-#              Native:   "/usr/bin/sone"
+#              Native:   "/usr/bin/dsone"
 #
 # Provides:
 #   write_test_script()  — writes the inner test script to $TEST_SCRIPT
@@ -30,7 +30,7 @@ write_test_script() {
 set -e
 
 # ldd check
-LDD_OUTPUT=\$(ldd /usr/bin/sone 2>&1 || true)
+LDD_OUTPUT=\$(ldd /usr/bin/dsone 2>&1 || true)
 if echo "\$LDD_OUTPUT" | grep -q "not found"; then
     echo "LDD_MISSING:"
     echo "\$LDD_OUTPUT" | grep "not found"
@@ -57,7 +57,7 @@ for i in \$(seq 1 30); do
     if ! kill -0 \$APP_PID 2>/dev/null; then
         break
     fi
-    if xdotool search --name "SONE" > /dev/null 2>&1; then
+    if xdotool search --name "dsone" > /dev/null 2>&1; then
         WINDOW_FOUND=1
         break
     fi
@@ -90,7 +90,7 @@ kill -0 \$APP_PID 2>/dev/null && APP_ALIVE=1
 if [[ \$APP_ALIVE -eq 1 ]]; then
     DBUS_NAMES=\$(dbus-send --session --dest=org.freedesktop.DBus --type=method_call \
         --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null || true)
-    if echo "\$DBUS_NAMES" | grep -q "org.mpris.MediaPlayer2.sone"; then
+    if echo "\$DBUS_NAMES" | grep -q "org.mpris.MediaPlayer2.io.github.technomagniaque.dsone"; then
         echo "CHECK:mpris_registered:PASS:on_bus"
     elif echo "\$STDERR_CONTENT" | grep -q "MPRIS D-Bus server started"; then
         echo "CHECK:mpris_registered:WARN:started_different_bus"
@@ -170,7 +170,7 @@ cd /tmp
 /appimage/*.AppImage --appimage-extract > /dev/null 2>&1
 
 # ldd check
-LDD_OUTPUT=$(ldd squashfs-root/usr/bin/sone 2>&1 || true)
+LDD_OUTPUT=$(ldd squashfs-root/usr/bin/dsone 2>&1 || true)
 if echo "$LDD_OUTPUT" | grep -q "not found"; then
     echo "LDD_MISSING:"
     echo "$LDD_OUTPUT" | grep "not found"
@@ -199,7 +199,7 @@ for i in $(seq 1 30); do
     if ! kill -0 $APP_PID 2>/dev/null; then
         break
     fi
-    if xdotool search --name "SONE" > /dev/null 2>&1; then
+    if xdotool search --name "dsone" > /dev/null 2>&1; then
         WINDOW_FOUND=1
         break
     fi
@@ -232,7 +232,7 @@ kill -0 $APP_PID 2>/dev/null && APP_ALIVE=1
 if [[ $APP_ALIVE -eq 1 ]]; then
     DBUS_NAMES=$(dbus-send --session --dest=org.freedesktop.DBus --type=method_call \
         --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null || true)
-    if echo "$DBUS_NAMES" | grep -q "org.mpris.MediaPlayer2.sone"; then
+    if echo "$DBUS_NAMES" | grep -q "org.mpris.MediaPlayer2.io.github.technomagniaque.dsone"; then
         echo "CHECK:mpris_registered:PASS:on_bus"
     elif echo "$STDERR_CONTENT" | grep -q "MPRIS D-Bus server started"; then
         echo "CHECK:mpris_registered:WARN:started_different_bus"

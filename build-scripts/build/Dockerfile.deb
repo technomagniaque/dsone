@@ -52,4 +52,4 @@ RUN --mount=type=cache,id=sone-deb-registry,target=/root/.cargo/registry \
     --mount=type=cache,id=sone-deb-target,target=/app/src-tauri/target \
     pnpm tauri build --bundles deb \
     && mkdir -p /output \
-    && cp src-tauri/target/release/bundle/deb/SONE_*.deb /output/
+    && cp src-tauri/target/release/bundle/deb/dsone_*.deb /output/

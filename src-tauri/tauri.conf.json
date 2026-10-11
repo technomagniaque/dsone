@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SONE",
+  "productName": "dsone",
   "version": "0.22.1",
-  "identifier": "io.github.lullabyX.sone",
+  "identifier": "io.github.technomagniaque.dsone",
+  "mainBinaryName": "dsone",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +13,7 @@
   "app": {
     "windows": [
       {
-        "title": "SONE",
+        "title": "dsone",
         "width": 1200,
         "height": 800,
         "visible": false,
@@ -47,6 +48,7 @@
           "gstreamer1.0-plugins-bad",
           "gstreamer1.0-libav",
           "gstreamer1.0-alsa",
+          "gstreamer1.0-pipewire",
           "libsecret-1-0",
           "libasound2 | libasound2t64",
           "librsvg2-common",
@@ -65,6 +67,7 @@
           "gstreamer1-plugins-good",
           "gstreamer1-plugins-bad-free",
           "gstreamer1-plugin-libav",
+          "pipewire-gstreamer",
           "alsa-lib",
           "libsecret",
           "librsvg2",
@@ -75,7 +78,11 @@
       "appimage": {
         "bundleMediaFramework": true
       }
-    }
+    },
+    "shortDescription": "Native Deezer and TIDAL client, bit-perfect audio",
+    "longDescription": "dsone is a fork of SONE (by lullabyX) adding a native Deezer client next to TIDAL, with bit-perfect playback, exclusive ALSA output, PipeWire and Signal Path transparency.",
+    "homepage": "https://github.com/technomagniaque/dsone",
+    "license": "GPL-3.0-only"
   },
   "plugins": {
     "deep-link": {

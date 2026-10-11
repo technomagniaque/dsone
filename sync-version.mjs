@@ -21,12 +21,12 @@ writeFileSync(
 
 // metainfo.xml (release version + date)
 const metainfo = readFileSync(
-  "data/io.github.lullabyX.sone.metainfo.xml",
+  "data/io.github.technomagniaque.dsone.metainfo.xml",
   "utf8"
 );
 const today = new Date().toISOString().slice(0, 10);
 writeFileSync(
-  "data/io.github.lullabyX.sone.metainfo.xml",
+  "data/io.github.technomagniaque.dsone.metainfo.xml",
   metainfo.replace(
     /<release version="[^"]+" date="[^"]+">/,
     `<release version="${version}" date="${today}">`

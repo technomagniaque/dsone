@@ -10,7 +10,8 @@ interface AboutModalProps {
   onClose: () => void;
 }
 
-const REPO_URL = "https://github.com/lullabyX/sone";
+const REPO_URL = "https://github.com/technomagniaque/dsone";
+const UPSTREAM_URL = "https://github.com/lullabyX/sone";
 const RELEASES_URL = `${REPO_URL}/releases`;
 const ISSUES_URL = `${REPO_URL}/issues`;
 const LICENSE_URL = `${REPO_URL}/blob/master/LICENSE`;
@@ -85,7 +86,7 @@ export default function AboutModal({ open, onClose }: AboutModalProps) {
             draggable={false}
           />
           <h2 className="text-[20px] font-bold text-th-text-primary tracking-tight">
-            SONE
+            dsone
           </h2>
           <div className="mt-1 flex items-center gap-2 text-[12px] text-th-text-muted">
             <button
@@ -105,9 +106,16 @@ export default function AboutModal({ open, onClose }: AboutModalProps) {
             </button>
           </div>
           <p className="mt-2 text-[12px] text-th-text-muted text-center">
-            Native Linux client for TIDAL
+            Native Linux client for Deezer and TIDAL
           </p>
           <p className="mt-1 text-[11px] text-th-text-muted text-center">
+            Fork of{" "}
+            <button
+              onClick={() => openExternal(UPSTREAM_URL)}
+              className="hover:text-th-accent transition-colors"
+            >
+              SONE
+            </button>{" "}
             by Hassan Rabbi ·{" "}
             <button
               onClick={() => openExternal(AUTHOR_URL)}
@@ -125,7 +133,7 @@ export default function AboutModal({ open, onClose }: AboutModalProps) {
             className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-th-accent/10 text-th-accent hover:bg-th-accent/20 transition-colors text-[13px] font-medium"
           >
             <Heart size={14} />
-            Support development on Patreon
+            Support SONE development on Patreon
           </button>
           <div className="mt-2.5 flex items-center justify-center gap-4 text-[12px]">
             <button

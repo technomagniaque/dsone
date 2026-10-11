@@ -150,7 +150,7 @@ impl MusicBrainzLookup {
         artist_name: &str,
     ) -> Result<MbidLookup, String> {
         let url = isrc_lookup_url(isrc);
-        let user_agent = format!("SONE/{APP_VERSION} (https://github.com/lullabyX/sone)");
+        let user_agent = format!("dsone/{APP_VERSION} (https://github.com/technomagniaque/dsone)");
         let client = self
             .http
             .client()

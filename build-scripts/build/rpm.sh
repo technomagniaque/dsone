@@ -50,7 +50,7 @@ build_rpm() {
 
     # Post-build check
     echo ""
-    RPM=$(ls "$outdir"/SONE-*.rpm 2>/dev/null | head -1)
+    RPM=$(ls "$outdir"/dsone-*.rpm 2>/dev/null | head -1)
     if [[ -z "$RPM" ]]; then
         echo "ERROR: No .rpm found in $outdir after build."
         exit 1

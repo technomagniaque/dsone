@@ -1,5 +1,5 @@
 {
-  description = "SONE — native Linux client for TIDAL (lossless, bit-perfect)";
+  description = "dsone — native Linux client for Deezer and TIDAL (lossless, bit-perfect); fork of SONE";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -11,17 +11,17 @@
     in
     {
       packages.${system} = {
-        sone = pkgs.callPackage ./nix/package.nix { src = self; };
-        default = self.packages.${system}.sone;
+        dsone = pkgs.callPackage ./nix/package.nix { src = self; };
+        default = self.packages.${system}.dsone;
       };
 
       apps.${system}.default = {
         type = "app";
-        program = "${self.packages.${system}.sone}/bin/sone";
+        program = "${self.packages.${system}.dsone}/bin/dsone";
       };
 
       devShells.${system}.default = pkgs.mkShell {
-        inputsFrom = [ self.packages.${system}.sone ];
+        inputsFrom = [ self.packages.${system}.dsone ];
         packages = [
           pkgs.nodejs
           pkgs.pnpm_11
@@ -44,6 +44,6 @@
 
       formatter.${system} = pkgs.nixfmt;
 
-      checks.${system}.build = self.packages.${system}.sone;
+      checks.${system}.build = self.packages.${system}.dsone;
     };
 }

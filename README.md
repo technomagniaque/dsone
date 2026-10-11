@@ -1,3 +1,77 @@
+# dsone
+
+**dsone** est un client de bureau natif pour **Deezer** et **TIDAL** sous Linux.
+C'est un fork de [SONE](https://github.com/lullabyX/sone), le client TIDAL de
+Hassan Rabbi ([@lullabyX](https://github.com/lullabyX)), auquel il ajoute un
+client Deezer natif tout en gardant son moteur audio : lecture bit-perfect,
+sortie ALSA exclusive, PipeWire/PulseAudio en mode normal et transparence du
+chemin du signal (Signal Path).
+
+- Fork de **SONE** par lullabyX — GPL-3.0 (`GPL-3.0-only`). Tout le mérite du
+  client TIDAL, de l'interface et du moteur audio revient au projet d'origine.
+- Le client Deezer reprend des idées de code de
+  [Deezer Enhanced](https://github.com/duzda/deezer-enhanced) par duzda (licence MIT).
+- dsone est distribué sous **GPL-3.0** (`GPL-3.0-only`, comme SONE), voir [LICENSE](LICENSE).
+- Client non officiel, sans lien avec Deezer ni TIDAL ; un abonnement actif au
+  service utilisé est nécessaire.
+
+### Identité de l'application
+
+| | SONE (upstream) | dsone |
+|---|---|---|
+| Identifiant | `io.github.lullabyX.sone` | `io.github.technomagniaque.dsone` |
+| Binaire | `sone` | `dsone` (Flatpak : `io.github.technomagniaque.dsone`) |
+| Nom MPRIS | `org.mpris.MediaPlayer2.io.github.lullabyX.sone` | `org.mpris.MediaPlayer2.io.github.technomagniaque.dsone` |
+| Dépôt | [lullabyX/sone](https://github.com/lullabyX/sone) | [technomagniaque/dsone](https://github.com/technomagniaque/dsone) |
+
+Le changement d'identifiant change les dossiers de données gérés par Tauri
+(`~/.local/share/io.github.technomagniaque.dsone`, cache WebKit, état des
+fenêtres) et, en Flatpak, tout le bac à sable (`~/.var/app/io.github.technomagniaque.dsone/`) :
+dsone ne reprend donc ni la session ni les réglages d'une installation SONE.
+En installation native, les réglages applicatifs restent pour l'instant dans
+`~/.config/sone/` (chemin codé en dur dans le code Rust) et le trousseau utilise
+le service `sone` : dsone et SONE installés nativement sur la même session
+partagent ces fichiers.
+
+### Installation et compatibilité
+
+| Distribution | GStreamer (dépôts) | PipeWire | Installation recommandée |
+|---|---|---|---|
+| Debian 13 (trixie) | 1.26.2 | 1.4.x | Flatpak (le `.deb` fonctionne, voir la note proxy) |
+| Kubuntu 26.04 LTS | 1.26.x / 1.28.x (à vérifier) | 1.4.x+ | `.deb` natif ou Flatpak |
+| Fedora 44 | 1.26.x récent / 1.28.x (à vérifier) | 1.4.x+ | `.rpm` natif ou Flatpak |
+| CachyOS (Arch) | dernière version (rolling) | dernière version | paquet `makepkg` natif |
+| Toutes (Flatpak) | runtime GNOME 50 (≥ 1.26.10, avec `curlhttpsrc`) | via le socket de l'hôte | `dsone-x86_64.flatpak` |
+
+Les versions marquées « à vérifier » n'ont pas pu être confirmées depuis l'environnement
+de préparation ; vérifiez avec `gst-inspect-1.0 --version` et `gst-inspect-1.0 curlhttpsrc`.
+
+**Note GStreamer < 1.26.10** (voir `src-tauri/src/proxy.rs`, `CURL_SEEK_FIXED`) :
+sous 1.26.10, le `seek` progressif de `curlhttpsrc` est défaillant, or c'est le seul
+élément capable de s'authentifier auprès d'un proxy via un tunnel CONNECT. Avec un
+**proxy HTTP/SOCKS5 qui demande un identifiant et un mot de passe**, dsone refuse
+alors les flux HTTP progressifs (capacité `Lossy`) au lieu de contourner le proxy ;
+les flux DASH (lossless/Hi-Res TIDAL) ne sont pas touchés. Sans proxy, ou avec un
+proxy sans authentification, il n'y a aucun impact. Debian 13 (1.26.2) est concernée ;
+le Flatpak ne l'est pas.
+
+Paquets et bundle Flatpak : page [Releases](https://github.com/technomagniaque/dsone/releases)
+(générés par `.github/workflows/distro-builds.yml` et `flatpak-bundle.yml`). Préparation
+Flathub : [flatpak/FLATHUB.md](flatpak/FLATHUB.md).
+
+```sh
+# Flatpak (bundle téléchargé depuis les Releases)
+flatpak install --user ./dsone-x86_64.flatpak
+flatpak run io.github.technomagniaque.dsone
+```
+
+---
+
+*La documentation ci-dessous est celle du projet d'origine SONE ; les liens
+Flathub, Snap, Cloudsmith et Nix qui y figurent installent SONE, pas dsone.*
+
+---
+
 <div align="center">
   <img src="sone.png" alt="SONE" width="150">
   <h1>SONE</h1>

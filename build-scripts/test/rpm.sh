@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: ./build-scripts/test/rpm.sh [path/to/SONE.rpm]
+# Usage: ./build-scripts/test/rpm.sh [path/to/dsone.rpm]
 # Auto-finds in dist/rpm/ and dist/rpm-opensuse/
 set -euo pipefail
 
@@ -10,7 +10,7 @@ source build-scripts/test/common.sh
 FEDORA_RPM="${1:-}"
 if [[ -z "$FEDORA_RPM" ]]; then
     for dir in dist/rpm src-tauri/target/release/bundle/rpm; do
-        candidate=$(ls "$dir"/SONE-*.rpm 2>/dev/null | head -1 || true)
+        candidate=$(ls "$dir"/dsone-*.rpm 2>/dev/null | head -1 || true)
         if [[ -n "$candidate" ]]; then
             FEDORA_RPM="$candidate"
             break
@@ -21,7 +21,7 @@ fi
 # ── Find openSUSE .rpm ───────────────────────────────────────────────────────
 OPENSUSE_RPM=""
 if [[ -z "${1:-}" ]]; then
-    candidate=$(ls dist/rpm-opensuse/SONE-*.rpm 2>/dev/null | head -1 || true)
+    candidate=$(ls dist/rpm-opensuse/dsone-*.rpm 2>/dev/null | head -1 || true)
     if [[ -n "$candidate" ]]; then
         OPENSUSE_RPM="$candidate"
     fi
@@ -45,7 +45,7 @@ echo "────────────────────────�
 # Write native-package test script with rpm registry check
 TEST_SCRIPT=$(mktemp /tmp/sone-test-XXXXXX.sh)
 trap 'rm -f "$TEST_SCRIPT"' EXIT
-write_test_script "$TEST_SCRIPT" "/usr/bin/sone"
+write_test_script "$TEST_SCRIPT" "/usr/bin/dsone"
 
 # Prepend package registry check
 ORIG=$(cat "$TEST_SCRIPT")
@@ -54,7 +54,7 @@ cat > "$TEST_SCRIPT" << 'PREPEND'
 set -e
 
 # Check: package installed in registry
-if rpm -qi sone > /dev/null 2>&1; then
+if rpm -qi dsone > /dev/null 2>&1; then
     echo "CHECK:pkg_installed:PASS:in_rpm_registry"
 else
     echo "CHECK:pkg_installed:FAIL:not_in_registry"

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=dsone
+Comment=Native Deezer and TIDAL client for Linux — bit-perfect lossless and Hi-Res audio
+Categories=AudioVideo;Audio;Music;Player;
+Exec=io.github.technomagniaque.dsone %u
+MimeType=x-scheme-handler/tidal;
+Icon=io.github.technomagniaque.dsone
+Terminal=false
+Type=Application
+StartupWMClass=io.github.technomagniaque.dsone
+GenericName=Music Streaming Client
+StartupNotify=true
+Keywords=deezer;tidal;streaming;player;music;hifi;hi-fi;audiophile;dac;alsa;pulseaudio;pipewire;replaygain;gapless;hi-res;flac;scrobble;lastfm;listenbrainz;mpris;discord;miniplayer;lyrics;themes;dark mode;proxy;mcp;

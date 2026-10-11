@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.technomagniaque.dsone</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>dsone</name>
+  <summary>Native Deezer and TIDAL client with bit-perfect audio</summary>
+
+  <developer id="io.github.technomagniaque">
+    <name>technomagniaque</name>
+  </developer>
+
+  <description>
+    <p>dsone is a native, lightweight desktop client for Deezer and TIDAL on Linux.
+       It is a fork of SONE by Hassan Rabbi (lullabyX) that adds a native Deezer
+       client next to the TIDAL one, while keeping SONE's audio engine: bit-perfect
+       playback, exclusive ALSA output and full Signal Path transparency. Built with
+       Tauri and Rust, it is small and fully native.</p>
+    <p>Deezer tracks stream in lossless FLAC (16-bit/44.1kHz) or MP3 depending on
+       your subscription, and TIDAL tracks in lossless FLAC and Hi-Res up to
+       24-bit/192kHz, with gapless, silence-free playback. For bit-perfect output,
+       exclusive ALSA mode bypasses PulseAudio and PipeWire entirely and sends the
+       unaltered signal straight to your DAC; normal mode plays through PipeWire or
+       PulseAudio for casual listening.</p>
+    <p>Audio</p>
+    <ul>
+      <li>Native Deezer client: library, playlists, search and lossless FLAC streaming</li>
+      <li>Native TIDAL client: lossless FLAC and Hi-Res streaming up to 24-bit/192kHz</li>
+      <li>Exclusive ALSA output that sends bit-perfect audio straight to your DAC</li>
+      <li>Bit-perfect mode with bit-depth promotion to your DAC's native depth</li>
+      <li>Automatic DAC format and sample-rate detection, with graceful fallback on mismatches</li>
+      <li>PipeWire and PulseAudio output in normal mode</li>
+      <li>Signal Path Transparency: inspect the live pipeline and confirm a bit-clean path to your DAC</li>
+      <li>Gapless playback and volume normalization (ReplayGain)</li>
+    </ul>
+    <p>Interface and integrations</p>
+    <ul>
+      <li>Customizable light and dark themes, full-screen player and synced lyrics</li>
+      <li>Floating, resizable miniplayer and customizable keyboard shortcuts</li>
+      <li>MPRIS media controls, system tray and Discord Rich Presence</li>
+      <li>Scrobbling to Last.fm, Libre.fm and ListenBrainz</li>
+      <li>HTTP, HTTPS and SOCKS5 proxy support</li>
+    </ul>
+    <p>Unofficial client, not affiliated with Deezer or TIDAL. It requires an active
+       subscription to the service you use, and is a streaming client only: it does
+       not support offline downloads.</p>
+  </description>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Music</category>
+    <category>Player</category>
+  </categories>
+
+  <keywords>
+    <keyword>deezer</keyword>
+    <keyword>tidal</keyword>
+    <keyword>music</keyword>
+    <keyword>streaming</keyword>
+    <keyword>player</keyword>
+    <keyword>hifi</keyword>
+    <keyword>hi-fi</keyword>
+    <keyword>audiophile</keyword>
+    <keyword>flac</keyword>
+    <keyword>dac</keyword>
+    <keyword>usb dac</keyword>
+    <keyword>alsa</keyword>
+    <keyword>pulseaudio</keyword>
+    <keyword>pipewire</keyword>
+    <keyword>replaygain</keyword>
+    <keyword>gapless</keyword>
+    <keyword>hi-res audio</keyword>
+    <keyword>scrobble</keyword>
+    <keyword>last.fm</keyword>
+    <keyword>listenbrainz</keyword>
+    <keyword>mpris</keyword>
+    <keyword>discord</keyword>
+    <keyword>miniplayer</keyword>
+    <keyword>lyrics</keyword>
+    <keyword>themes</keyword>
+    <keyword>dark mode</keyword>
+    <keyword>proxy</keyword>
+    <keyword>mcp</keyword>
+    <keyword>music video</keyword>
+    <keyword>music videos</keyword>
+    <keyword>video</keyword>
+  </keywords>
+
+  <launchable type="desktop-id">io.github.technomagniaque.dsone.desktop</launchable>
+
+  <url type="homepage">https://github.com/technomagniaque/dsone</url>
+  <url type="bugtracker">https://github.com/technomagniaque/dsone/issues</url>
+  <url type="vcs-browser">https://github.com/technomagniaque/dsone</url>
+  <url type="contribute">https://github.com/technomagniaque/dsone</url>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#FDF2F8</color>
+    <color type="primary" scheme_preference="dark">#31274F</color>
+  </branding>
+
+  <!-- Placeholder screenshots: SONE's captures, served from the dsone repository.
+       Replace them with dsone captures (Deezer views) before submitting to Flathub. -->
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/technomagniaque/dsone/master/data/sone_drawer_metainfo.png</image>
+      <caption>Now playing drawer with play queue</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/technomagniaque/dsone/master/data/sone_fullscreen_metainfo.png</image>
+      <caption>Full-screen player with karaoke-style lyrics</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/technomagniaque/dsone/master/data/sone_homepage_metainfo.png</image>
+      <caption>Home page with the streaming library</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/technomagniaque/dsone/master/data/sone_search_metainfo.png</image>
+      <caption>Search and explore</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/technomagniaque/dsone/master/data/sone_theme_metainfo.png</image>
+      <caption>Custom theme with full color customization</caption>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.22.1" date="2026-10-11">
+      <description>
+        <p>First dsone release, based on SONE 0.22.1</p>
+        <ul>
+          <li>New native Deezer client next to TIDAL</li>
+          <li>New application identity, with its own settings and cache folders</li>
+          <li>Flatpak bundle and native packages for Debian, Ubuntu, Fedora and Arch Linux</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>

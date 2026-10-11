@@ -90,9 +90,9 @@ impl ListenBrainzProvider {
         const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
         let mut additional_info = json!({
-            "media_player": "SONE",
+            "media_player": "dsone",
             "media_player_version": APP_VERSION,
-            "submission_client": "SONE",
+            "submission_client": "dsone",
             "submission_client_version": APP_VERSION,
             "music_service": "tidal.com",
         });

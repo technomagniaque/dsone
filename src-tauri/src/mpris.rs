@@ -63,9 +63,12 @@ impl MprisHandle {
                 // desktop file is exported as <snap>_<app>. Everything else keeps
                 // the reverse-DNS app id (Flathub requires it).
                 let (bus_name, desktop_entry) = if std::env::var("SNAP").is_ok() {
-                    ("sone", "sone_sone")
+                    ("dsone", "dsone_dsone")
                 } else {
-                    ("io.github.lullabyX.sone", "io.github.lullabyX.sone")
+                    (
+                        "io.github.technomagniaque.dsone",
+                        "io.github.technomagniaque.dsone",
+                    )
                 };
                 let player = match Player::builder(bus_name)
                     .can_play(true)
@@ -102,7 +105,7 @@ impl MprisHandle {
                 };
 
                 // Identity + desktop entry so KDE/GNOME can associate with the window
-                player.set_identity("SONE").await.ok();
+                player.set_identity("dsone").await.ok();
                 player.set_desktop_entry(desktop_entry).await.ok();
 
                 // Wire control callbacks — reuse existing tray event system

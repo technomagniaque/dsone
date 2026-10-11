@@ -38,17 +38,17 @@ COPY . .
 RUN --mount=type=cache,id=sone-pacman-registry,target=/root/.cargo/registry \
     --mount=type=cache,id=sone-pacman-git,target=/root/.cargo/git \
     --mount=type=cache,id=sone-pacman-target,target=/app/src-tauri/target \
-    rm -f src-tauri/target/release/bundle/deb/SONE_*.deb \
+    rm -f src-tauri/target/release/bundle/deb/dsone_*.deb \
     && pnpm tauri build --bundles deb \
     && mkdir -p /build \
-    && cp src-tauri/target/release/bundle/deb/SONE_*.deb /build/sone.deb
+    && cp src-tauri/target/release/bundle/deb/dsone_*.deb /build/dsone.deb
 
 # ── Layer 6: Repackage deb → pacman via PKGBUILD ────────────────────────────
 # makepkg refuses to run as root — create a build user
 RUN useradd -m builder \
     && mkdir -p /pkgbuild /output \
     && cp build-scripts/build/PKGBUILD /pkgbuild/ \
-    && cp /build/sone.deb /pkgbuild/ \
+    && cp /build/dsone.deb /pkgbuild/ \
     && chown -R builder:builder /pkgbuild /output
 
 USER builder
