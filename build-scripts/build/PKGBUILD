@@ -1,10 +1,14 @@
-# Maintainer: lullabyX
-pkgname=sone
+# Maintainer: technomagniaque
+# Contributor: lullabyX (upstream SONE, https://github.com/lullabyX/sone)
+#
+# Arch Linux / CachyOS package for dsone. Repackages the .deb produced by
+# `pnpm tauri build --bundles deb` (Tauri cannot emit pacman packages itself).
+pkgname=dsone
 pkgver=0.22.1
 pkgrel=1
-pkgdesc="Unofficial Tidal music streaming desktop app"
+pkgdesc="Unofficial Deezer and TIDAL desktop client with bit-perfect audio (fork of SONE)"
 arch=('x86_64')
-url="https://github.com/lullabyX/sone"
+url="https://github.com/technomagniaque/dsone"
 license=('GPL-3.0-only')
 depends=(
     'webkit2gtk-4.1'
@@ -12,24 +16,29 @@ depends=(
     'gstreamer'
     'gst-plugins-base'
     'gst-plugins-good'
+    # gst-plugins-bad ships curlhttpsrc (authenticated proxies) and dashdemux
     'gst-plugins-bad'
     'gst-libav'
+    'gst-plugin-pipewire'
     'libsecret'
     'alsa-lib'
     'librsvg'
     'libayatana-appindicator'
     'libpulse'
 )
+optdepends=(
+    'pipewire-pulse: PulseAudio compatibility for normal (non-exclusive) output'
+)
 
 # The .deb is built by Tauri and copied alongside this PKGBUILD before makepkg runs.
-source=("sone.deb")
+source=("dsone.deb")
 sha256sums=('SKIP')
-noextract=("sone.deb")
+noextract=("dsone.deb")
 
 package() {
     cd "$srcdir"
     # Extract the deb: ar extracts control.tar.* and data.tar.*
-    ar x sone.deb
+    ar x dsone.deb
     # Extract data.tar.* (contains /usr/bin, /usr/share, etc.) into pkgdir
     tar xf data.tar.* -C "$pkgdir"
 }

@@ -23,4 +23,4 @@ Stuck on something? Happy to help, share as much as you can below and we'll take
 
 ## One last thing
 
-- [ ] I had a quick look through [existing issues](https://github.com/lullabyX/sone/issues?q=is%3Aissue) and skimmed the README before posting.
+- [ ] I had a quick look through [existing issues](https://github.com/technomagniaque/dsone/issues?q=is%3Aissue) and skimmed the README before posting.

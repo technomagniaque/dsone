@@ -1,0 +1,100 @@
+# Local / CI variant of io.github.technomagniaque.dsone.yml: identical except
+# that it builds the checkout it lives in (type: dir) instead of a tagged
+# commit. Keep the two files in sync when changing finish-args or build steps.
+#
+#   flatpak-builder --user --install --force-clean \
+#     flatpak/build-dir flatpak/io.github.technomagniaque.dsone.local.yml
+#
+# cargo-sources.json and pnpm-sources.json must be generated first
+# (see flatpak/FLATHUB.md).
+id: io.github.technomagniaque.dsone
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node24
+command: io.github.technomagniaque.dsone
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --share=network
+  # Normal output mode goes through PulseAudio / pipewire-pulse.
+  - --socket=pulseaudio
+  # Flatpak has no "pipewire" socket type: native PipeWire clients reach the
+  # daemon through its socket in XDG_RUNTIME_DIR.
+  - --filesystem=xdg-run/pipewire-0
+  # Exclusive ALSA / bit-perfect mode opens /dev/snd/* directly (hw:/plughw:),
+  # which --socket=pulseaudio does not expose. --device=all also covers DRI.
+  - --device=all
+  # MPRIS: the bus name is org.mpris.MediaPlayer2.io.github.technomagniaque.dsone
+  # (src-tauri/src/mpris.rs), which Flatpak lets the app own without --own-name.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Discord Rich Presence (same set as upstream; see src-tauri/src/discord_ipc.rs).
+  - --filesystem=xdg-run/discord-ipc-0:ro
+  - --filesystem=xdg-run/discord-ipc-1:ro
+  - --filesystem=xdg-run/discord-ipc-2:ro
+  - --filesystem=xdg-run/discord-ipc-3:ro
+  - --filesystem=xdg-run/discord-ipc-4:ro
+  - --filesystem=xdg-run/discord-ipc-5:ro
+  - --filesystem=xdg-run/discord-ipc-6:ro
+  - --filesystem=xdg-run/discord-ipc-7:ro
+  - --filesystem=xdg-run/discord-ipc-8:ro
+  - --filesystem=xdg-run/discord-ipc-9:ro
+  - --filesystem=xdg-run/app/com.discordapp.Discord:create
+  - --filesystem=xdg-run/app/com.discordapp.DiscordCanary:create
+  - --filesystem=xdg-run/app/dev.vencord.Vesktop:create
+  - --filesystem=xdg-run/.flatpak/com.discordapp.Discord/xdg-run:ro
+  - --filesystem=xdg-run/.flatpak/dev.vencord.Vesktop/xdg-run:ro
+  - --filesystem=xdg-run/snap.discord:ro
+  - --filesystem=xdg-run/snap.discord-canary:ro
+  - --env=WEBKIT_DISABLE_COMPOSITING_MODE=1
+build-options:
+  append-path: /run/build/dsone/.npm-global/bin:/usr/lib/sdk/node24/bin:/usr/lib/sdk/rust-stable/bin
+modules:
+  - name: dsone
+    buildsystem: simple
+    sources:
+      # The checkout this manifest lives in (flatpak/..).
+      - type: dir
+        path: ..
+        skip:
+          - node_modules
+          - src-tauri/target
+          - dist
+          - .flatpak-builder
+          - flatpak_app
+          - repo
+          - flatpak/.flatpak-builder
+          - flatpak/build-dir
+          - flatpak/repo
+      - type: file
+        url: https://registry.npmjs.org/pnpm/-/pnpm-11.1.3.tgz
+        sha256: 740302fe768aaf1ba680c5213bd08983f219e0bcf0c96c0c6d7be393b8620c98
+        dest-filename: pnpm-11.1.3.tgz
+      - pnpm-sources.json
+      - cargo-sources.json
+    build-options:
+      env:
+        CARGO_HOME: /run/build/dsone/cargo
+        XDG_CACHE_HOME: /run/build/dsone/flatpak-node/cache
+        npm_config_nodedir: /usr/lib/sdk/node24
+        npm_config_prefix: /run/build/dsone/.npm-global
+        npm_config_cache: /run/build/dsone/npm-cache
+        npm_config_offline: "true"
+        CARGO_NET_OFFLINE: "true"
+    build-commands:
+      - mkdir -p /run/build/dsone/.npm-global
+      - npm install -g pnpm-11.1.3.tgz
+      - pnpm install --offline --frozen-lockfile
+      - cargo --offline fetch --manifest-path src-tauri/Cargo.toml
+      - pnpm tauri build --no-bundle
+      # tauri.conf.json sets mainBinaryName "dsone"; fall back to the cargo name.
+      - install -Dm755 "$(ls -1 src-tauri/target/release/dsone src-tauri/target/release/sone 2>/dev/null | head -n1)" /app/bin/io.github.technomagniaque.dsone
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/io.github.technomagniaque.dsone.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/io.github.technomagniaque.dsone.png
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.technomagniaque.dsone.png
+      - install -Dm644 data/io.github.technomagniaque.dsone.desktop /app/share/applications/io.github.technomagniaque.dsone.desktop
+      - install -Dm644 data/io.github.technomagniaque.dsone.metainfo.xml /app/share/metainfo/io.github.technomagniaque.dsone.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/io.github.technomagniaque.dsone/LICENSE

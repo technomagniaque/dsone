@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: ./build-scripts/build/pacman.sh [--no-cache]
-# Output: ./dist/pacman/sone-<version>-1-x86_64.pkg.tar.zst
+# Output: ./dist/pacman/dsone-<version>-1-x86_64.pkg.tar.zst
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -30,7 +30,7 @@ docker rm "$CONTAINER" > /dev/null
 
 # Post-build check
 echo ""
-PKG=$(ls "$OUTDIR"/sone-*.pkg.tar.zst 2>/dev/null | head -1)
+PKG=$(ls "$OUTDIR"/dsone-*.pkg.tar.zst 2>/dev/null | head -1)
 if [[ -z "$PKG" ]]; then
     echo "ERROR: No .pkg.tar.zst found in $OUTDIR after build."
     exit 1

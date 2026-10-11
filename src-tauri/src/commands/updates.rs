@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::State;
 
 const GITHUB_LATEST_RELEASE_URL: &str =
-    "https://api.github.com/repos/lullabyX/sone/releases/latest";
+    "https://api.github.com/repos/technomagniaque/dsone/releases/latest";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

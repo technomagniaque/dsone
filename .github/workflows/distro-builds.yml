@@ -1,0 +1,185 @@
+name: Distro packages
+
+# Native packages for the distributions dsone targets, each built inside that
+# distribution's own container so it links against the libraries it will run
+# with:
+#   - Debian 13 (trixie)  -> .deb
+#   - Kubuntu 26.04       -> .deb (built on the ubuntu:26.04 base image)
+#   - Fedora 44           -> .rpm
+#   - CachyOS / Arch      -> .pkg.tar.zst (Tauri .deb repackaged by makepkg)
+# The Flatpak (flatpak-bundle.yml) covers all four as well.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      arch_image:
+        description: >-
+          Container for the Arch-family build. Use archlinux:latest if the
+          CachyOS image is unavailable or broken.
+        required: false
+        default: cachyos/cachyos:latest
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distro-builds-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write # attach packages to the release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debian 13 (trixie)
+            image: debian:trixie
+            family: debian
+            suffix: debian13
+          # Kubuntu 26.04 is Ubuntu 26.04 + KDE; the packages are the same.
+          # If the 26.04 tag is ever missing from Docker Hub, ubuntu:devel
+          # tracks the next release (but may move past 26.04 later).
+          - name: Kubuntu 26.04
+            image: ubuntu:26.04
+            family: debian
+            suffix: ubuntu26.04
+          - name: Fedora 44
+            image: fedora:44
+            family: fedora
+            suffix: fc44
+          # CachyOS by default; archlinux:latest is the fallback (see input).
+          - name: CachyOS / Arch Linux
+            image: ${{ inputs.arch_image || 'cachyos/cachyos:latest' }}
+            family: arch
+            suffix: arch
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Install build dependencies (Debian / Ubuntu)
+        if: matrix.family == 'debian'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install --no-install-recommends -y \
+            build-essential pkg-config curl file git ca-certificates xz-utils \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libssl-dev libdbus-1-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libsecret-1-dev libasound2-dev xdg-utils dpkg-dev
+
+      - name: Install build dependencies (Fedora)
+        if: matrix.family == 'fedora'
+        run: |
+          dnf install -y \
+            gcc gcc-c++ make pkgconf-pkg-config curl file git xz tar \
+            webkit2gtk4.1-devel gtk3-devel libappindicator-gtk3-devel \
+            librsvg2-devel openssl-devel dbus-devel \
+            gstreamer1-devel gstreamer1-plugins-base-devel \
+            libsecret-devel alsa-lib-devel xdg-utils rpm
+
+      - name: Install build dependencies (CachyOS / Arch)
+        if: matrix.family == 'arch'
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git curl file \
+            webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl dbus \
+            gstreamer gst-plugins-base gst-plugins-base-libs \
+            gst-plugins-good gst-plugins-bad gst-plugins-bad-libs gst-libav \
+            gst-plugin-pipewire libsecret alsa-lib xdg-utils
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        # This action publishes no version tags; `stable` is a moving branch,
+        # so the pin is date-stamped to keep it auditable after the fact.
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch @ 2026-09-03
+        with:
+          toolchain: stable
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build .deb
+        if: matrix.family == 'debian' || matrix.family == 'arch'
+        # no `--` before --bundles: pnpm would forward it to cargo, not tauri.
+        run: pnpm tauri build --bundles deb
+
+      - name: Build .rpm
+        if: matrix.family == 'fedora'
+        run: pnpm tauri build --bundles rpm
+
+      - name: Collect .deb
+        if: matrix.family == 'debian'
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          mkdir -p out
+          for f in src-tauri/target/release/bundle/deb/dsone_*.deb; do
+            base=$(basename "$f" .deb)          # dsone_<ver>_amd64
+            cp "$f" "out/${base%_*}_${SUFFIX}_${base##*_}.deb"
+          done
+          dpkg-deb -I out/*.deb | grep -E '^ (Package|Version|Depends):'
+
+      - name: Collect .rpm
+        if: matrix.family == 'fedora'
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          mkdir -p out
+          for f in src-tauri/target/release/bundle/rpm/dsone-*.rpm; do
+            base=$(basename "$f" .rpm)          # dsone-<ver>-1.x86_64
+            cp "$f" "out/${base%.*}.${SUFFIX}.${base##*.}.rpm"
+          done
+          rpm -qpR out/*.rpm
+
+      - name: Repackage as pacman package (makepkg)
+        if: matrix.family == 'arch'
+        run: |
+          # makepkg refuses to run as root.
+          id builder >/dev/null 2>&1 || useradd -m builder
+          mkdir -p /tmp/pkgbuild out
+          cp build-scripts/build/PKGBUILD /tmp/pkgbuild/
+          cp src-tauri/target/release/bundle/deb/dsone_*.deb /tmp/pkgbuild/dsone.deb
+          chown -R builder:builder /tmp/pkgbuild
+          runuser -u builder -- bash -c 'cd /tmp/pkgbuild && makepkg --noconfirm --nodeps'
+          cp /tmp/pkgbuild/dsone-*.pkg.tar.zst out/
+          pacman -Qip out/*.pkg.tar.zst | grep -E '^(Name|Version|Depends On)'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dsone-${{ matrix.suffix }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: out/*
+          fail_on_unmatched_files: true

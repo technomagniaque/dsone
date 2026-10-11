@@ -25,4 +25,4 @@ Got an idea for SONE? Let's hear it.
 
 ## One last thing
 
-- [ ] I had a quick look through [existing issues](https://github.com/lullabyX/sone/issues?q=is%3Aissue) and didn't see this one already suggested.
+- [ ] I had a quick look through [existing issues](https://github.com/technomagniaque/dsone/issues?q=is%3Aissue) and didn't see this one already suggested.

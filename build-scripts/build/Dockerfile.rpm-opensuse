@@ -41,7 +41,7 @@ RUN npm install -g pnpm@11.1.3 && pnpm install --frozen-lockfile
 
 # ── Layer 5: Full source + patch deps + build ────────────────────────────────
 COPY . .
-RUN echo "%vendor lullabyX" >> /root/.rpmmacros
+RUN echo "%vendor technomagniaque" >> /root/.rpmmacros
 
 # Patch RPM dependency names for openSUSE
 RUN sed -i 's/"webkit2gtk4\.1"/"libwebkit2gtk-4_1-0"/' src-tauri/tauri.conf.json \
@@ -52,11 +52,12 @@ RUN sed -i 's/"webkit2gtk4\.1"/"libwebkit2gtk-4_1-0"/' src-tauri/tauri.conf.json
     && sed -i 's/"gstreamer1-plugins-bad-free"/"gstreamer-plugins-bad"/' src-tauri/tauri.conf.json \
     && sed -i 's/"gstreamer1-plugin-libav"/"gstreamer-plugins-libav"/' src-tauri/tauri.conf.json \
     && sed -i 's/"libsecret"/"libsecret-1-0"/' src-tauri/tauri.conf.json \
-    && sed -i 's/"librsvg2"/"librsvg-2-2"/' src-tauri/tauri.conf.json
+    && sed -i 's/"librsvg2"/"librsvg-2-2"/' src-tauri/tauri.conf.json \
+    && sed -i 's/"pipewire-gstreamer"/"gstreamer-plugin-pipewire"/' src-tauri/tauri.conf.json
 
 RUN --mount=type=cache,id=sone-opensuse-registry,target=/root/.cargo/registry \
     --mount=type=cache,id=sone-opensuse-git,target=/root/.cargo/git \
     --mount=type=cache,id=sone-opensuse-target,target=/app/src-tauri/target \
     pnpm tauri build --bundles rpm \
     && mkdir -p /output \
-    && cp src-tauri/target/release/bundle/rpm/SONE-*.rpm /output/
+    && cp src-tauri/target/release/bundle/rpm/dsone-*.rpm /output/

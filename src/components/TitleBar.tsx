@@ -102,7 +102,7 @@ export default function TitleBar() {
             isFocused ? "opacity-100" : "opacity-50"
           }`}
         >
-          SONE
+          dsone
         </span>
         <span
           className={`w-1.5 h-1.5 rounded-full bg-th-accent shrink-0 pointer-events-none transition-opacity ${

@@ -1,19 +1,20 @@
-name: sone
+name: dsone
 base: core24
 adopt-info: build-app
-title: SONE
-summary: Native Linux client for TIDAL
+title: dsone
+summary: Native Linux client for Deezer and TIDAL
 description: |
-  Native Linux client for TIDAL — lossless and bit-perfect audio streaming.
+  Native Linux client for Deezer and TIDAL — lossless and bit-perfect audio streaming.
+  dsone is a fork of SONE by lullabyX (https://github.com/technomagniaque/dsone).
   Supports HiRes FLAC, exclusive ALSA output, Scrobbling integration, MPRIS integration, and more.
 
-  For exclusive ALSA output, run: sudo snap connect sone:alsa
+  For exclusive ALSA output, run: sudo snap connect dsone:alsa
 icon: snap/gui/sone.png
 license: GPL-3.0-only
-website: https://github.com/lullabyX/sone
-source-code: https://github.com/lullabyX/sone
-issues: https://github.com/lullabyX/sone/issues
-contact: https://github.com/lullabyX/sone/issues
+website: https://github.com/technomagniaque/dsone
+source-code: https://github.com/technomagniaque/dsone
+issues: https://github.com/technomagniaque/dsone/issues
+contact: https://github.com/technomagniaque/dsone/issues
 
 grade: stable
 confinement: strict
@@ -69,16 +70,16 @@ layout:
     bind: $SNAP/usr/lib/x86_64-linux-gnu/alsa-lib
 
 slots:
-  # mpris interface needs a dotless name; the app uses "sone" under snap to match
-  # (mpris.rs picks it via the SNAP env var). Grants org.mpris.MediaPlayer2.sone.
+  # mpris interface needs a dotless name; the app uses "dsone" under snap to match
+  # (mpris.rs picks it via the SNAP env var). Grants org.mpris.MediaPlayer2.dsone.
   mpris:
     interface: mpris
-    name: sone
+    name: dsone
 
 apps:
-  sone:
-    command: usr/bin/sone
-    desktop: usr/share/applications/sone.desktop
+  dsone:
+    command: usr/bin/dsone
+    desktop: usr/share/applications/dsone.desktop
     extensions: [gnome]
     environment:
       GST_PLUGIN_SYSTEM_PATH: $SNAP/usr/lib/x86_64-linux-gnu/gstreamer-1.0
@@ -155,6 +156,6 @@ parts:
       mkdir -p $SNAPCRAFT_PART_INSTALL/usr/lib/x86_64-linux-gnu
       ln -sf blas/libblas.so.3 $SNAPCRAFT_PART_INSTALL/usr/lib/x86_64-linux-gnu/libblas.so.3
       ln -sf lapack/liblapack.so.3 $SNAPCRAFT_PART_INSTALL/usr/lib/x86_64-linux-gnu/liblapack.so.3
-      # Icon=sone / usr/bin/sone assume mainBinaryName stays unset (lowercase).
-      sed -i -e "s|Icon=sone|Icon=/usr/share/icons/hicolor/32x32/apps/sone.png|g" $SNAPCRAFT_PART_INSTALL/usr/share/applications/SONE.desktop
-      cp $SNAPCRAFT_PART_INSTALL/usr/share/applications/SONE.desktop $SNAPCRAFT_PART_INSTALL/usr/share/applications/sone.desktop
+      # productName and mainBinaryName are both "dsone" (tauri.conf.json), so the
+      # deb ships usr/bin/dsone, dsone.desktop and Icon=dsone.
+      sed -i -e "s|Icon=dsone|Icon=/usr/share/icons/hicolor/32x32/apps/dsone.png|g" $SNAPCRAFT_PART_INSTALL/usr/share/applications/dsone.desktop

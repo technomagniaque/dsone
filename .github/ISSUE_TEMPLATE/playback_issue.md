@@ -70,4 +70,4 @@ You can drag the file in here, or paste the relevant lines below.
 
 ## One last thing
 
-- [ ] I had a quick look through [existing issues](https://github.com/lullabyX/sone/issues?q=is%3Aissue) and didn't see this one already reported.
+- [ ] I had a quick look through [existing issues](https://github.com/technomagniaque/dsone/issues?q=is%3Aissue) and didn't see this one already reported.

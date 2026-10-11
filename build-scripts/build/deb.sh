@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: ./build-scripts/build/deb.sh [--no-cache]
-# Output: ./dist/deb/SONE_<version>_amd64.deb
+# Output: ./dist/deb/dsone_<version>_amd64.deb
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -30,7 +30,7 @@ docker rm "$CONTAINER" > /dev/null
 
 # Post-build check: verify dependencies are declared
 echo ""
-DEB=$(ls "$OUTDIR"/SONE_*.deb 2>/dev/null | head -1)
+DEB=$(ls "$OUTDIR"/dsone_*.deb 2>/dev/null | head -1)
 if [[ -z "$DEB" ]]; then
     echo "ERROR: No .deb found in $OUTDIR after build."
     exit 1

@@ -1,5 +1,12 @@
 name: Update Flathub
 
+# Opens an update PR on dsone's own Flathub repository after each release tag.
+# Inert until that repository exists: set the repository variable
+#   FLATHUB_REPO = flathub/io.github.technomagniaque.dsone
+# (Settings > Secrets and variables > Actions > Variables) and the
+# FLATHUB_TOKEN secret. Any other value (or none) skips the job, and the
+# target is hard-coded, so it can never be upstream's flathub/io.github.lullabyX.sone.
+
 on:
   push:
     tags:
@@ -10,7 +17,11 @@ permissions:
 
 jobs:
   update-flathub:
+    if: vars.FLATHUB_REPO == 'flathub/io.github.technomagniaque.dsone'
     runs-on: ubuntu-latest
+    env:
+      FLATHUB_REPO: flathub/io.github.technomagniaque.dsone
+      MANIFEST: io.github.technomagniaque.dsone.yml
     steps:
       - name: Extract tag and commit
         id: meta
@@ -32,7 +43,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout sone at tag
+      - name: Checkout dsone at tag
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ steps.meta.outputs.tag }}
@@ -43,7 +54,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.FLATHUB_TOKEN }}
         run: |
-          git clone https://github.com/flathub/io.github.lullabyX.sone.git flathub
+          git clone "https://github.com/${FLATHUB_REPO}.git" flathub
           cd flathub
           git config http.https://github.com/.extraheader \
             "AUTHORIZATION: basic $(printf '%s' "x-access-token:${TOKEN}" | base64 -w0)"
@@ -56,7 +67,7 @@ jobs:
         run: |
           BRANCH="update-${TAG}"
           COUNT=$(gh pr list \
-            --repo flathub/io.github.lullabyX.sone \
+            --repo "$FLATHUB_REPO" \
             --head "$BRANCH" \
             --state open --json number --jq 'length')
           if [ "$COUNT" -gt 0 ]; then
@@ -73,9 +84,9 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
           COMMIT: ${{ steps.meta.outputs.commit }}
         run: |
-          GIT_SRC='.modules[] | select(.name == "sone") | .sources[] | select(.type == "git")'
-          yq -i "($GIT_SRC).tag = strenv(TAG)" io.github.lullabyX.sone.yml
-          yq -i "($GIT_SRC).commit = strenv(COMMIT)" io.github.lullabyX.sone.yml
+          GIT_SRC='.modules[] | select(.name == "dsone") | .sources[] | select(.type == "git")'
+          yq -i "($GIT_SRC).tag = strenv(TAG)" "$MANIFEST"
+          yq -i "($GIT_SRC).commit = strenv(COMMIT)" "$MANIFEST"
 
       - name: Set up Python
         if: steps.check.outputs.skip != 'true'
@@ -115,7 +126,7 @@ jobs:
           git checkout -b "$BRANCH"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add io.github.lullabyX.sone.yml cargo-sources.json pnpm-sources.json
+          git add "$MANIFEST" cargo-sources.json pnpm-sources.json
           git rm --ignore-unmatch node-sources.json
           git commit -m "Update to ${TAG}"
           git push -u origin "$BRANCH"
@@ -129,13 +140,13 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh pr create \
-            --repo flathub/io.github.lullabyX.sone \
+            --repo "$FLATHUB_REPO" \
             --head "update-${TAG}" \
             --title "Update to ${TAG}" \
             --body "Automated update to [${TAG}](${REPO_URL}/releases/tag/${TAG}).
 
           ### Changes
-          - Updated \`tag\` and \`commit\` in \`io.github.lullabyX.sone.yml\`
+          - Updated \`tag\` and \`commit\` in \`${MANIFEST}\`
           - Regenerated \`cargo-sources.json\`
           - Regenerated \`pnpm-sources.json\`
 

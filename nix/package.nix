@@ -22,7 +22,7 @@
 }:
 
 rustPlatform.buildRustPackage (finalAttrs: {
-  pname = "sone";
+  pname = "dsone";
   version = (builtins.fromJSON (builtins.readFile ../src-tauri/tauri.conf.json)).version;
 
   inherit src;
@@ -71,10 +71,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
   # bundle (binary, desktop entry, icons, tidal:// scheme) into $out.
 
   meta = {
-    description = "Native Linux client for TIDAL — lossless and bit-perfect audio streaming";
-    homepage = "https://github.com/lullabyX/sone";
+    description = "Native Linux client for Deezer and TIDAL — lossless and bit-perfect audio streaming (fork of SONE)";
+    homepage = "https://github.com/technomagniaque/dsone";
     license = lib.licenses.gpl3Only;
-    mainProgram = "sone";
+    mainProgram = "dsone";
     platforms = [ "x86_64-linux" ];
   };
 })

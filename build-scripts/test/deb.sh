@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: ./build-scripts/test/deb.sh [path/to/SONE.deb]
+# Usage: ./build-scripts/test/deb.sh [path/to/dsone.deb]
 # Auto-finds in dist/deb/ or src-tauri/target/release/bundle/deb/
 set -euo pipefail
 
@@ -10,7 +10,7 @@ source build-scripts/test/common.sh
 DEB="${1:-}"
 if [[ -z "$DEB" ]]; then
     for dir in dist/deb src-tauri/target/release/bundle/deb; do
-        candidate=$(ls "$dir"/SONE_*.deb 2>/dev/null | head -1 || true)
+        candidate=$(ls "$dir"/dsone_*.deb 2>/dev/null | head -1 || true)
         if [[ -n "$candidate" ]]; then
             DEB="$candidate"
             break
@@ -42,7 +42,7 @@ DISTROS=(
 # Write native-package test script (runs /usr/bin/sone, adds package registry check)
 TEST_SCRIPT=$(mktemp /tmp/sone-test-XXXXXX.sh)
 trap 'rm -f "$TEST_SCRIPT"' EXIT
-write_test_script "$TEST_SCRIPT" "/usr/bin/sone"
+write_test_script "$TEST_SCRIPT" "/usr/bin/dsone"
 
 # Prepend package registry check
 ORIG=$(cat "$TEST_SCRIPT")
@@ -51,7 +51,7 @@ cat > "$TEST_SCRIPT" << 'PREPEND'
 set -e
 
 # Check: package installed in registry
-if dpkg -s sone > /dev/null 2>&1; then
+if dpkg -s dsone > /dev/null 2>&1; then
     echo "CHECK:pkg_installed:PASS:in_dpkg_registry"
 else
     echo "CHECK:pkg_installed:FAIL:not_in_registry"

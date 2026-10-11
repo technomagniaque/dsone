@@ -4,7 +4,7 @@
 # Prereqs:
 #   pip install --upgrade cloudsmith-cli
 #   export CLOUDSMITH_API_KEY=...        (or run: cloudsmith login)
-#   export CLOUDSMITH_REPO=lullabyx/sone (owner/repo of your Cloudsmith repo)
+#   export CLOUDSMITH_REPO=technomagniaque/dsone (owner/repo of your Cloudsmith repo)
 #
 # Build artifacts first:  ./build-scripts/build/deb.sh && ./build-scripts/build/rpm.sh
 # Then:                   ./build-scripts/publish-cloudsmith.sh
@@ -21,9 +21,9 @@ REPO="${CLOUDSMITH_REPO:?set CLOUDSMITH_REPO=owner/repo}"
 
 latest() { ls -t $1 2>/dev/null | head -1; }
 
-DEB="$(latest 'dist/deb/SONE_*_amd64.deb')"
-RPM_FEDORA="$(latest 'dist/rpm/SONE-*.x86_64.rpm')"
-RPM_SUSE="$(latest 'dist/rpm-opensuse/SONE-*.x86_64.rpm')"
+DEB="$(latest 'dist/deb/dsone_*_amd64.deb')"
+RPM_FEDORA="$(latest 'dist/rpm/dsone-*.x86_64.rpm')"
+RPM_SUSE="$(latest 'dist/rpm-opensuse/dsone-*.x86_64.rpm')"
 
 [ -n "$DEB" ]        && echo "deb:      $DEB"        || { echo "no .deb in dist/deb"; exit 1; }
 [ -n "$RPM_FEDORA" ] && echo "fedora:   $RPM_FEDORA" || { echo "no .rpm in dist/rpm"; exit 1; }

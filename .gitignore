@@ -43,9 +43,9 @@ docs/
 # local files
 nocommit
 
-# flatpak
+# flatpak: the manifests and FLATHUB.md in flatpak/ are versioned; generated
+# sources and builder state are not (see the block at the end of this file).
 .flatpak-builder
-flatpak*
 
 # workspace
 sone.code-workspace
@@ -61,3 +61,12 @@ sone.code-workspace
 
 # watch skill scratch files
 .watchtmp-*
+
+# Flatpak (generated offline sources and builder state)
+flatpak/cargo-sources.json
+flatpak/pnpm-sources.json
+flatpak/build-dir/
+flatpak/repo/
+.flatpak-builder/
+flatpak_app/
+*.flatpak

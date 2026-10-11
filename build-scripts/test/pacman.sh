@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: ./build-scripts/test/pacman.sh [path/to/sone.pkg.tar.zst]
+# Usage: ./build-scripts/test/pacman.sh [path/to/dsone.pkg.tar.zst]
 # Auto-finds in dist/pacman/
 set -euo pipefail
 
@@ -9,7 +9,7 @@ source build-scripts/test/common.sh
 # ── Find .pkg.tar.zst ────────────────────────────────────────────────────────
 PKG="${1:-}"
 if [[ -z "$PKG" ]]; then
-    candidate=$(ls dist/pacman/sone-*.pkg.tar.zst 2>/dev/null | head -1 || true)
+    candidate=$(ls dist/pacman/dsone-*.pkg.tar.zst 2>/dev/null | head -1 || true)
     if [[ -n "$candidate" ]]; then
         PKG="$candidate"
     fi
@@ -38,7 +38,7 @@ DISTROS=(
 # Write native-package test script with pacman registry check
 TEST_SCRIPT=$(mktemp /tmp/sone-test-XXXXXX.sh)
 trap 'rm -f "$TEST_SCRIPT"' EXIT
-write_test_script "$TEST_SCRIPT" "/usr/bin/sone"
+write_test_script "$TEST_SCRIPT" "/usr/bin/dsone"
 
 # Prepend package registry check
 ORIG=$(cat "$TEST_SCRIPT")
@@ -47,7 +47,7 @@ cat > "$TEST_SCRIPT" << 'PREPEND'
 set -e
 
 # Check: package installed in registry
-if pacman -Qi sone > /dev/null 2>&1; then
+if pacman -Qi dsone > /dev/null 2>&1; then
     echo "CHECK:pkg_installed:PASS:in_pacman_registry"
 else
     echo "CHECK:pkg_installed:FAIL:not_in_registry"

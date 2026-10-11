@@ -41,9 +41,9 @@ const CONNECT_DEADLINE: Duration = Duration::from_secs(5);
 /// publish its IPC socket.
 ///
 /// These mirror the `--filesystem` grants in the Flathub manifest, which lives
-/// in the separate `flathub/io.github.lullabyX.sone` repository and cannot be
+/// in the separate `flathub/io.github.technomagniaque.dsone` repository and cannot be
 /// checked from this working tree. Verify against a built package with
-/// `flatpak info --show-permissions io.github.lullabyX.sone`.
+/// `flatpak info --show-permissions io.github.technomagniaque.dsone`.
 pub(crate) const APP_SUBPATHS: [&str; 9] = [
     "",
     "app/com.discordapp.Discord/",
