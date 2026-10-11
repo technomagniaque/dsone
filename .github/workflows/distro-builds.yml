@@ -1,3 +1,4 @@
+# Lancement manuel : onglet Actions → ce workflow → Run workflow (artefacts sans Release).
 name: Distro packages
 
 # Native packages for the distributions dsone targets, each built inside that

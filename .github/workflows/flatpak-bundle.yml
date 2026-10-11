@@ -1,3 +1,4 @@
+# Lancement manuel : onglet Actions → ce workflow → Run workflow (artefacts sans Release).
 name: Flatpak bundle
 
 # Builds dsone-<arch>.flatpak from the tagged checkout and attaches it to the
