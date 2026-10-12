@@ -109,6 +109,44 @@ async fn watch_login_cookie(app: AppHandle) {
 }
 
 #[tauri::command]
+pub async fn deezer_get_editable_playlists(
+    state: State<'_, AppState>,
+) -> Result<Vec<DzPlaylist>, SoneError> {
+    state.deezer.editable_playlists().await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_add_tracks_to_playlist(
+    state: State<'_, AppState>,
+    playlist_id: u64,
+    track_ids: Vec<u64>,
+) -> Result<(), SoneError> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    state.deezer.add_to_playlist(playlist_id, &track_ids).await
+}
+
+/// Returns the new playlist's id.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_create_playlist(
+    state: State<'_, AppState>,
+    title: String,
+    description: String,
+    is_public: bool,
+    track_ids: Vec<u64>,
+) -> Result<u64, SoneError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(SoneError::Parse("playlist title is empty".into()));
+    }
+    state
+        .deezer
+        .create_playlist(title, description.trim(), is_public, &track_ids)
+        .await
+}
+
+#[tauri::command]
 pub async fn deezer_restore_session(
     state: State<'_, AppState>,
 ) -> Result<Option<DeezerUser>, SoneError> {

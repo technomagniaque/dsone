@@ -29,6 +29,8 @@ export type DeezerBrowserLogin =
 export const deezerBrowserLoginAtom = atom<DeezerBrowserLogin>({
   state: "idle",
 });
+/** Bumped after a Deezer playlist is created or changed, so lists refetch. */
+export const deezerPlaylistsVersionAtom = atom(0);
 export const deezerQualityAtom = atom<DeezerQuality>("FLAC");
 /** Search source picked by the user; null = automatic (TIDAL when signed in). */
 export const searchProviderAtom = atomWithStorage<Provider | null>(

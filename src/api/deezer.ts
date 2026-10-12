@@ -85,6 +85,30 @@ export const deezerGetFavoriteTracks = async () =>
 export const deezerGetUserPlaylists = async () =>
   tagAll(await invoke<Playlist[]>("deezer_get_user_playlists"));
 
+/** The user's own playlists, minus Loved Tracks: the ones tracks can be
+ *  added to. */
+export const deezerGetEditablePlaylists = async () =>
+  tagAll(await invoke<Playlist[]>("deezer_get_editable_playlists"));
+
+export const deezerAddTracksToPlaylist = (
+  playlistId: number,
+  trackIds: number[],
+) => invoke<null>("deezer_add_tracks_to_playlist", { playlistId, trackIds });
+
+/** Returns the new playlist's id. */
+export const deezerCreatePlaylist = (
+  title: string,
+  description: string,
+  isPublic: boolean,
+  trackIds: number[],
+) =>
+  invoke<number>("deezer_create_playlist", {
+    title,
+    description,
+    isPublic,
+    trackIds,
+  });
+
 export const deezerGetUserAlbums = async () =>
   tagAll(await invoke<AlbumDetail[]>("deezer_get_user_albums"));
 

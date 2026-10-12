@@ -52,7 +52,7 @@ export default function TrackContextMenu({
   const { addToQueue, playNextInQueue } = usePlaybackActions();
   const { isTrackFavorite, addFavoriteTrack, removeFavoriteTrack } =
     useFavorites();
-  // Deezer tracks: no TIDAL playlists, no TIDAL track radio.
+  // Deezer tracks go to Deezer playlists; no TIDAL track radio.
   const deezer = isDeezer(track);
   const { navigateToMix } = useNavigation();
   const { removeTrackFromPlaylist } = usePlaylists();
@@ -231,21 +231,19 @@ export default function TrackContextMenu({
         {/* Divider */}
         <div className="my-1 border-t border-th-inset" />
 
-        {/* Add to playlist (TIDAL playlists take TIDAL tracks only) */}
-        {!deezer && (
-          <button
-            ref={playlistBtnRef}
-            className={`${menuItemClass} ${showPlaylistSubmenu ? "bg-th-hl-faint" : ""}`}
-            onClick={() => setShowPlaylistSubmenu(true)}
-          >
-            <ListMusic size={18} className="shrink-0 text-th-text-muted" />
-            <span>Add to playlist</span>
-            <ChevronRight
-              size={16}
-              className="ml-auto shrink-0 text-th-text-muted"
-            />
-          </button>
-        )}
+        {/* Add to playlist (each service's playlists take its own tracks) */}
+        <button
+          ref={playlistBtnRef}
+          className={`${menuItemClass} ${showPlaylistSubmenu ? "bg-th-hl-faint" : ""}`}
+          onClick={() => setShowPlaylistSubmenu(true)}
+        >
+          <ListMusic size={18} className="shrink-0 text-th-text-muted" />
+          <span>Add to playlist</span>
+          <ChevronRight
+            size={16}
+            className="ml-auto shrink-0 text-th-text-muted"
+          />
+        </button>
 
         {/* Add to / Remove from Loved tracks */}
         <button className={menuItemClass} onClick={handleToggleFavorite}>
@@ -304,6 +302,7 @@ export default function TrackContextMenu({
       {showPlaylistSubmenu && (
         <AddToPlaylistMenu
           trackIds={[track.id]}
+          provider={deezer ? "deezer" : "tidal"}
           anchorRef={playlistBtnRef}
           placement="side"
           onClose={() => {

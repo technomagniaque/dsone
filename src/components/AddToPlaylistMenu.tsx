@@ -6,10 +6,16 @@ import { usePlaylists } from "../hooks/usePlaylists";
 import { allPlaylistsAtom, addedToFolderAtom } from "../atoms/playlists";
 import { authTokensAtom } from "../atoms/auth";
 import { getAllPlaylists } from "../api/tidal";
+import {
+  deezerAddTracksToPlaylist,
+  deezerCreatePlaylist,
+  deezerGetEditablePlaylists,
+} from "../api/deezer";
+import { deezerPlaylistsVersionAtom, deezerUserAtom } from "../atoms/deezer";
 import { useContextMenu } from "../hooks/useContextMenu";
 import { useEscapeDismiss } from "../hooks/useEscapeDismiss";
 import { DISMISS_PRIORITY } from "../lib/dismissStack";
-import { type Playlist, getTidalImageUrl } from "../types";
+import { type Playlist, type Provider, getTidalImageUrl } from "../types";
 import { playlistCountLabel } from "../utils/itemHelpers";
 import TidalImage from "./TidalImage";
 import MenuPortal from "./MenuPortal";
@@ -19,6 +25,9 @@ import Toggle from "./Toggle";
 
 interface AddToPlaylistMenuProps {
   trackIds: number[];
+  /** Whose playlists: TIDAL (default) or Deezer. The track ids must be from
+   *  the same service. */
+  provider?: Provider;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
   placement?: "below" | "side";
   onClose: () => void;
@@ -26,24 +35,27 @@ interface AddToPlaylistMenuProps {
 
 // ─── Recent-playlist persistence ───────────────────────────────
 
-const RECENT_PLAYLISTS_KEY = "sone.recent-playlists.v1";
+const RECENT_PLAYLISTS_KEY: Record<Provider, string> = {
+  tidal: "sone.recent-playlists.v1",
+  deezer: "dsone.recent-deezer-playlists.v1",
+};
 const MAX_RECENT = 8;
 const DESC_MAX_LEN = 500;
 
-function getRecentPlaylistIds(): string[] {
+function getRecentPlaylistIds(provider: Provider): string[] {
   try {
-    const raw = localStorage.getItem(RECENT_PLAYLISTS_KEY);
+    const raw = localStorage.getItem(RECENT_PLAYLISTS_KEY[provider]);
     if (raw) return JSON.parse(raw);
   } catch {}
   return [];
 }
 
-function pushRecentPlaylistId(playlistId: string) {
-  const ids = getRecentPlaylistIds().filter((id) => id !== playlistId);
+function pushRecentPlaylistId(provider: Provider, playlistId: string) {
+  const ids = getRecentPlaylistIds(provider).filter((id) => id !== playlistId);
   ids.unshift(playlistId);
   if (ids.length > MAX_RECENT) ids.length = MAX_RECENT;
   try {
-    localStorage.setItem(RECENT_PLAYLISTS_KEY, JSON.stringify(ids));
+    localStorage.setItem(RECENT_PLAYLISTS_KEY[provider], JSON.stringify(ids));
   } catch {}
 }
 
@@ -51,14 +63,17 @@ function pushRecentPlaylistId(playlistId: string) {
 
 export function CreatePlaylistModal({
   trackIds,
+  provider = "tidal",
   onClose,
   onCreated,
 }: {
   trackIds: number[];
+  provider?: Provider;
   onClose: () => void;
   onCreated: (playlist: Playlist) => void;
 }) {
   const { createPlaylist, addTracksToPlaylist } = usePlaylists();
+  const deezerUser = useAtomValue(deezerUserAtom);
   const { showToast } = useToast();
 
   const [title, setTitle] = useState("");
@@ -80,15 +95,35 @@ export function CreatePlaylistModal({
     setError(null);
     setSaving(true);
     try {
-      const playlist = await createPlaylist(
-        title.trim(),
-        description.trim(),
-        isPublic ? "PUBLIC" : "UNLISTED",
-      );
-      if (trackIds.length > 0) {
-        await addTracksToPlaylist(playlist.uuid, trackIds);
+      let playlist: Playlist;
+      if (provider === "deezer") {
+        const id = await deezerCreatePlaylist(
+          title.trim(),
+          description.trim(),
+          isPublic,
+          trackIds,
+        );
+        playlist = {
+          uuid: String(id),
+          title: title.trim(),
+          description: description.trim(),
+          numberOfTracks: trackIds.length,
+          creator: deezerUser
+            ? { id: deezerUser.id, name: deezerUser.name }
+            : undefined,
+          provider: "deezer",
+        } as Playlist;
+      } else {
+        playlist = await createPlaylist(
+          title.trim(),
+          description.trim(),
+          isPublic ? "PUBLIC" : "UNLISTED",
+        );
+        if (trackIds.length > 0) {
+          await addTracksToPlaylist(playlist.uuid, trackIds);
+        }
       }
-      pushRecentPlaylistId(playlist.uuid);
+      pushRecentPlaylistId(provider, playlist.uuid);
       showToast(`Created playlist "${title.trim()}"`);
       onCreated(playlist);
     } catch {
@@ -100,6 +135,8 @@ export function CreatePlaylistModal({
     description,
     isPublic,
     saving,
+    provider,
+    deezerUser,
     createPlaylist,
     addTracksToPlaylist,
     trackIds,
@@ -374,15 +411,39 @@ export function EditPlaylistModal({
 
 export default function AddToPlaylistMenu({
   trackIds,
+  provider = "tidal",
   anchorRef,
   placement,
   onClose,
 }: AddToPlaylistMenuProps) {
-  const { addTracksToPlaylist } = usePlaylists();
+  const deezer = provider === "deezer";
+  const { addTracksToPlaylist: addTidalTracks } = usePlaylists();
   const { showToast } = useToast();
   const setAddedToFolder = useSetAtom(addedToFolderAtom);
-  const [allPlaylists, setAllPlaylists] = useAtom(allPlaylistsAtom);
+  const [tidalPlaylists, setTidalPlaylists] = useAtom(allPlaylistsAtom);
+  const [deezerPlaylists, setDeezerPlaylists] = useState<Playlist[]>([]);
+  const bumpDeezerPlaylists = useSetAtom(deezerPlaylistsVersionAtom);
   const authTokens = useAtomValue(authTokensAtom);
+  const allPlaylists = deezer ? deezerPlaylists : tidalPlaylists;
+  const addTracksToPlaylist = useCallback(
+    (playlistId: string, ids: number[]) =>
+      deezer
+        ? deezerAddTracksToPlaylist(Number(playlistId), ids)
+        : addTidalTracks(playlistId, ids),
+    [deezer, addTidalTracks],
+  );
+
+  // Deezer: the user's editable playlists, fetched on each open.
+  useEffect(() => {
+    if (!deezer) return;
+    let cancelled = false;
+    deezerGetEditablePlaylists()
+      .then((p) => !cancelled && setDeezerPlaylists(p))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [deezer]);
 
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -395,7 +456,7 @@ export default function AddToPlaylistMenu({
 
   // Lazy-fetch all playlists on first open
   useEffect(() => {
-    if (allPlaylists.length > 0 || !authTokens?.user_id) return;
+    if (deezer || tidalPlaylists.length > 0 || !authTokens?.user_id) return;
     let cancelled = false;
     const userId = authTokens.user_id;
     const PAGE = 500;
@@ -403,7 +464,7 @@ export default function AddToPlaylistMenu({
     getAllPlaylists(userId, 0, PAGE)
       .then(async (first) => {
         if (cancelled) return;
-        setAllPlaylists(first.items);
+        setTidalPlaylists(first.items);
 
         const total = first.totalNumberOfItems;
         if (total > PAGE) {
@@ -414,7 +475,7 @@ export default function AddToPlaylistMenu({
           const results = await Promise.all(pages);
           if (cancelled) return;
           const rest = results.flatMap((r) => r.items);
-          setAllPlaylists((prev) => [...prev, ...rest]);
+          setTidalPlaylists((prev) => [...prev, ...rest]);
         }
       })
       .catch(() => {});
@@ -422,7 +483,7 @@ export default function AddToPlaylistMenu({
     return () => {
       cancelled = true;
     };
-  }, [allPlaylists.length, authTokens?.user_id, setAllPlaylists]);
+  }, [deezer, tidalPlaylists.length, authTokens?.user_id, setTidalPlaylists]);
 
   const { menuRef, style } = useContextMenu({
     anchorRef,
@@ -440,7 +501,7 @@ export default function AddToPlaylistMenu({
   }, [showAll]);
 
   // Recent playlists
-  const recentIds = getRecentPlaylistIds();
+  const recentIds = getRecentPlaylistIds(provider);
   const recentPlaylists = recentIds
     .map((id) => allPlaylists.find((p) => p.uuid === id))
     .filter((p): p is Playlist => !!p);
@@ -458,7 +519,7 @@ export default function AddToPlaylistMenu({
       setAddingTo(playlist.uuid);
       try {
         await addTracksToPlaylist(playlist.uuid, trackIds);
-        pushRecentPlaylistId(playlist.uuid);
+        pushRecentPlaylistId(provider, playlist.uuid);
         setAddedTo((prev) => new Set([...prev, playlist.uuid]));
         const label =
           playlist.title.length > 25
@@ -471,7 +532,8 @@ export default function AddToPlaylistMenu({
         );
         setTimeout(onClose, 500);
         // Reset so next open re-fetches all playlists
-        setAllPlaylists([]);
+        if (deezer) bumpDeezerPlaylists((v) => v + 1);
+        else setTidalPlaylists([]);
       } catch (err: any) {
         const isDuplicateError = (e: unknown): boolean => {
           try {
@@ -479,9 +541,12 @@ export default function AddToPlaylistMenu({
             if (parsed?.kind === "Api" && parsed?.message?.status === 409)
               return true;
           } catch {}
+          const text = String(e).toLowerCase();
           return (
-            String(e).includes("409") ||
-            String(e).toLowerCase().includes("dupe")
+            text.includes("409") ||
+            text.includes("dupe") ||
+            // Deezer: playlist.addSongs answers ERROR_DATA_EXISTS
+            text.includes("exists")
           );
         };
 
@@ -502,7 +567,16 @@ export default function AddToPlaylistMenu({
         setAddingTo(null);
       }
     },
-    [addTracksToPlaylist, trackIds, onClose, showToast],
+    [
+      addTracksToPlaylist,
+      provider,
+      deezer,
+      bumpDeezerPlaylists,
+      setTidalPlaylists,
+      trackIds,
+      onClose,
+      showToast,
+    ],
   );
 
   // ── Playlist rows ──
@@ -727,8 +801,15 @@ export default function AddToPlaylistMenu({
       {showCreateModal && (
         <CreatePlaylistModal
           trackIds={trackIds}
+          provider={provider}
           onClose={() => setShowCreateModal(false)}
           onCreated={(playlist) => {
+            if (deezer) {
+              bumpDeezerPlaylists((v) => v + 1);
+              setShowCreateModal(false);
+              onClose();
+              return;
+            }
             setAddedToFolder((prev) => {
               const next = new Map(prev);
               const list = next.get("root") ?? [];
@@ -743,7 +824,7 @@ export default function AddToPlaylistMenu({
             });
             setShowCreateModal(false);
             // Reset so next open re-fetches all playlists
-            setAllPlaylists([]);
+            setTidalPlaylists([]);
             onClose();
           }}
         />

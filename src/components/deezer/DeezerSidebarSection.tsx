@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAtomValue } from "jotai";
 import { Music } from "lucide-react";
 import { currentViewAtom } from "../../atoms/navigation";
+import { deezerPlaylistsVersionAtom } from "../../atoms/deezer";
 import { deezerGetUserPlaylists } from "../../api/deezer";
 import { useNavigation } from "../../hooks/useNavigation";
 import type { Playlist } from "../../types";
@@ -25,6 +26,7 @@ export default function DeezerSidebarSection({
   const currentView = useAtomValue(currentViewAtom);
   const { navigateTo, navigateToPlaylist } = useNavigation();
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
+  const playlistsVersion = useAtomValue(deezerPlaylistsVersionAtom);
 
   useEffect(() => {
     if (!fill) return;
@@ -38,7 +40,7 @@ export default function DeezerSidebarSection({
     return () => {
       cancelled = true;
     };
-  }, [fill]);
+  }, [fill, playlistsVersion]);
 
   const rowClass = (active: boolean) =>
     `w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 ${

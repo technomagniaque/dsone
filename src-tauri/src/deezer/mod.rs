@@ -90,6 +90,9 @@ struct Session {
     license_token: String,
     cookies: BTreeMap<String, String>,
     user: DeezerUser,
+    /// The account's "Loved Tracks" playlist (filled through the heart, not
+    /// through "Add to playlist").
+    loved_playlist_id: Option<u64>,
 }
 
 impl std::fmt::Debug for Session {
@@ -322,12 +325,17 @@ impl DeezerClient {
         let (user, license_token) = models::gw_user(&results).ok_or_else(invalid_arl)?;
         let api_token = models::text(&results, "checkForm")
             .ok_or_else(|| SoneError::Parse("deezer: no checkForm in user data".into()))?;
+        let loved_playlist_id = results
+            .get("USER")
+            .and_then(|u| models::num(u, "LOVEDTRACKS_ID"))
+            .filter(|&id| id != 0);
         Ok(Session {
             arl,
             api_token,
             license_token,
             cookies,
             user,
+            loved_playlist_id,
         })
     }
 
@@ -345,6 +353,7 @@ impl DeezerClient {
             s.api_token = fresh.api_token;
             s.license_token = fresh.license_token;
             s.user = fresh.user;
+            s.loved_playlist_id = fresh.loved_playlist_id;
             s.cookies.extend(fresh.cookies);
         }
         Ok(())
@@ -656,6 +665,61 @@ impl DeezerClient {
         Ok(())
     }
 
+    /// Playlists the user can add tracks to: their own, minus Loved Tracks.
+    pub async fn editable_playlists(&self) -> Result<Vec<DzPlaylist>, SoneError> {
+        let (uid, loved) = {
+            let guard = self.lock_session();
+            let s = guard.as_ref().ok_or(SoneError::NotAuthenticated)?;
+            (s.user.id, s.loved_playlist_id)
+        };
+        let all = self.user_playlists().await?;
+        Ok(editable(all, uid, loved))
+    }
+
+    /// Append tracks to one of the user's playlists.
+    pub async fn add_to_playlist(
+        &self,
+        playlist_id: u64,
+        track_ids: &[u64],
+    ) -> Result<(), SoneError> {
+        self.gw(
+            "playlist.addSongs",
+            json!({
+                "playlist_id": playlist_id.to_string(),
+                "songs": songs_payload(track_ids),
+                "offset": -1,
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Create a playlist (optionally already holding `track_ids`); returns
+    /// its id.
+    pub async fn create_playlist(
+        &self,
+        title: &str,
+        description: &str,
+        public: bool,
+        track_ids: &[u64],
+    ) -> Result<u64, SoneError> {
+        let r = self
+            .gw(
+                "playlist.create",
+                json!({
+                    "title": title,
+                    "description": description,
+                    // STATUS: 0 public, 1 private.
+                    "status": if public { 0 } else { 1 },
+                    "songs": songs_payload(track_ids),
+                }),
+            )
+            .await?;
+        r.as_u64()
+            .or_else(|| r.as_str().and_then(|s| s.parse().ok()))
+            .ok_or_else(|| SoneError::Parse("deezer playlist.create: no playlist id".into()))
+    }
+
     // ---- streaming ---------------------------------------------------------
 
     /// Resolve a CDN URL for `track_id`, trying `formats` in order (Deezer
@@ -775,6 +839,24 @@ impl DeezerClient {
     }
 }
 
+/// gw-light's song list: `[[id, 0], ...]` (the second value is the song's
+/// position hint, always 0 when appending).
+fn songs_payload(track_ids: &[u64]) -> Value {
+    Value::Array(
+        track_ids
+            .iter()
+            .map(|id| json!([id.to_string(), 0]))
+            .collect(),
+    )
+}
+
+fn editable(all: Vec<DzPlaylist>, uid: u64, loved: Option<u64>) -> Vec<DzPlaylist> {
+    all.into_iter()
+        .filter(|p| p.creator.as_ref().is_some_and(|c| c.id == uid))
+        .filter(|p| loved.is_none_or(|id| p.uuid != id.to_string()))
+        .collect()
+}
+
 fn gw_failure(method: &str, e: GwError) -> SoneError {
     match e {
         GwError::InvalidToken => SoneError::NotAuthenticated,
@@ -834,9 +916,27 @@ mod tests {
                 can_stream_hq: false,
                 country: None,
             },
+            loved_playlist_id: None,
         };
         let d = format!("{s:?}");
         assert!(!d.contains("SECRETARL") && !d.contains("lic") && !d.contains("tok"));
+    }
+
+    #[test]
+    fn deezer_playlist_songs_payload_and_editable_filter() {
+        assert_eq!(songs_payload(&[3, 42]), json!([["3", 0], ["42", 0]]));
+        let pl = |id: u64, owner: u64| {
+            models::gw_playlist(&json!({
+                "PLAYLIST_ID": id.to_string(), "TITLE": format!("p{id}"),
+                "PARENT_USER_ID": owner.to_string()
+            }))
+            .unwrap()
+        };
+        let all = vec![pl(1, 7), pl(2, 9), pl(3, 7)];
+        let ids = |v: Vec<DzPlaylist>| v.into_iter().map(|p| p.uuid).collect::<Vec<_>>();
+        // Someone else's playlist and the Loved Tracks one are left out.
+        assert_eq!(ids(editable(all.clone(), 7, Some(3))), vec!["1"]);
+        assert_eq!(ids(editable(all, 7, None)), vec!["1", "3"]);
     }
 
     #[test]

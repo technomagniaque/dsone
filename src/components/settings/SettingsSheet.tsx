@@ -12,6 +12,7 @@ import {
   Tv2,
   Headphones,
   Disc3,
+  Waves,
   type LucideIcon,
 } from "lucide-react";
 import { useEscapeDismiss } from "../../hooks/useEscapeDismiss";
@@ -27,11 +28,13 @@ import UtilitiesTab from "./UtilitiesTab";
 import McpTab from "./McpTab";
 import OverlayTab from "./OverlayTab";
 import DeezerTab from "./DeezerTab";
+import TidalTab from "./TidalTab";
 
 export type TabId =
   | "playback"
   | "audio-output"
   | "deezer"
+  | "tidal"
   | "themes"
   | "scrobble"
   | "discord"
@@ -51,6 +54,7 @@ const GROUPS: {
       { id: "playback", label: "Playback", icon: Volume2 },
       { id: "audio-output", label: "Audio output", icon: Headphones },
       { id: "deezer", label: "Deezer", icon: Disc3 },
+      { id: "tidal", label: "TIDAL", icon: Waves },
       { id: "themes", label: "Themes", icon: Palette },
     ],
   },
@@ -180,6 +184,7 @@ export default function SettingsSheet({
               {active === "playback" && <PlaybackTab />}
               {active === "audio-output" && <AudioOutputTab />}
               {active === "deezer" && <DeezerTab />}
+              {active === "tidal" && <TidalTab onClose={onClose} />}
               {active === "themes" && <ThemesTab />}
               {active === "scrobble" && <ScrobbleTab />}
               {active === "discord" && <DiscordTab />}

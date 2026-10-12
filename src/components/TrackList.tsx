@@ -426,18 +426,12 @@ const TrackRow = memo(function TrackRow({
           </button>
         ) : (
           <>
-            {/* TIDAL playlists only take TIDAL tracks; keep the slot so
-                columns stay aligned. */}
             <button
               ref={plusButtonRef}
-              disabled={deezer}
-              aria-hidden={deezer || undefined}
               className={`p-1.5 rounded-full transition-colors ${
-                deezer
-                  ? "invisible"
-                  : playlistMenuOpen
-                    ? "text-th-accent"
-                    : "text-th-text-muted hover:text-th-text-primary"
+                playlistMenuOpen
+                  ? "text-th-accent"
+                  : "text-th-text-muted hover:text-th-text-primary"
               }`}
               title="Add to playlist"
               onClick={handlePlusClick}
@@ -447,6 +441,7 @@ const TrackRow = memo(function TrackRow({
             {playlistMenuOpen && (
               <AddToPlaylistMenu
                 trackIds={[track.id]}
+                provider={deezer ? "deezer" : "tidal"}
                 anchorRef={plusButtonRef}
                 onClose={() => setPlaylistMenuOpen(false)}
               />
