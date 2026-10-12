@@ -5,12 +5,10 @@ name: Flatpak bundle
 # GitHub Release. Independent from Flathub: this is the "plan B" distribution
 # channel described in flatpak/FLATHUB.md.
 
-# Tag builds paused until Etienne validates the native packages on CachyOS;
-# to re-enable, restore:
-#   push:
-#     tags:
-#       - 'v*'
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
