@@ -709,6 +709,20 @@ fn the_proxy_hook_is_attached_once_per_pipeline() {
     );
 }
 
+/// An inline `uridecodebin` silently falls back to a 2 MB stream buffer
+/// (`buffer-size` unset), which is what issue #225's stutter came from.
+#[test]
+fn uridecodebin_is_built_in_one_place() {
+    let body = without_comments(&audio_rs_production_source());
+    assert_eq!(
+        body.matches("ElementFactory::make(\"uridecodebin\")")
+            .count(),
+        1,
+        "build stream decoders through make_stream_decodebin so every one \
+         gets the stream buffer budget"
+    );
+}
+
 /// With no proxy, `souphttpsrc` must win HTTP source selection over
 /// `curlhttpsrc`, which is true only while soup outranks curl in the registry.
 ///

@@ -521,13 +521,30 @@ fn apply_normalization_gain(
     signal_path.set_norm_gain_factor(gain as f32);
 }
 
+/// Compressed lookahead per stream. DASH buffers after `qtdemux` on timestamped
+/// data, so the duration binds there. Progressive bytes carry no timestamps, so
+/// the byte budget binds instead. Unset, `buffer-size` falls back to 2 MB.
+const STREAM_BUFFER_DURATION_NS: i64 = 30_000_000_000;
+/// Covers 30 s of uncompressed 24/192 stereo (34.56 MB), so on DASH the
+/// duration, not this, is what binds.
+const STREAM_BUFFER_SIZE_BYTES: i32 = 40 * 1024 * 1024;
+
+fn make_stream_decodebin(uri: &str) -> Result<gst::Element, String> {
+    gst::ElementFactory::make("uridecodebin")
+        .property("uri", uri)
+        .property("buffer-duration", STREAM_BUFFER_DURATION_NS)
+        .property("buffer-size", STREAM_BUFFER_SIZE_BYTES)
+        .property("use-buffering", true)
+        .build()
+        .map_err(|e| format!("Failed to create uridecodebin: {e}"))
+}
+
 /// 2b-A2: build + preroll the next-track branch on the executor thread.
 ///
 /// Mirrors the first branch's wiring (sink_0): legacy `uridecodebin` →
 /// per-branch `queue` → `concat sink_1`. The branch queue (C1) decouples this
 /// decoder from concat's back-pressure on the inactive sink pad so it
-/// pre-buffers ahead while the current track plays. A smaller `buffer-duration`
-/// (~3s, per C3) prerolls the source without fully pre-downloading it.
+/// pre-buffers ahead while the current track plays.
 ///
 /// Returns the constructed elements so the caller can stash them in
 /// `NextBinState`. On any error the partially-added elements are removed so the
@@ -538,15 +555,7 @@ fn attach_next_bin(
     uri: &str,
     is_dash: bool,
 ) -> Result<(gst::Element, gst::Element), String> {
-    let udb = gst::ElementFactory::make("uridecodebin")
-        .property("uri", uri)
-        // 15s compressed buffer so the next track (and the current one once this
-        // becomes active) rides out network jitter on slow connections. We have
-        // the whole current track as lead time to fill it during preroll.
-        .property("buffer-duration", 15_000_000_000i64)
-        .property("use-buffering", true)
-        .build()
-        .map_err(|e| format!("Failed to create next uridecodebin: {e}"))?;
+    let udb = make_stream_decodebin(uri)?;
     // No route here: this bin joins a pipeline whose `watch_pipeline_sources`
     // hook already configures every HTTP source that appears under it.
     // Same props as the first branch's queue: 15s of decoded reservoir ahead of
@@ -2345,20 +2354,7 @@ impl AudioPlayer {
                                 // about-to-finish. Legacy uridecodebin handles Tidal
                                 // `data:application/dash+xml` URIs and works on GStreamer
                                 // < 1.24.
-                                let mut udb =
-                                    gst::ElementFactory::make("uridecodebin").property("uri", &uri);
-                                if is_dash {
-                                    udb = udb
-                                        .property("buffer-duration", 15_000_000_000i64)
-                                        .property("use-buffering", true);
-                                } else {
-                                    udb = udb
-                                        .property("buffer-duration", 5_000_000_000i64)
-                                        .property("use-buffering", true);
-                                }
-                                let uridecodebin = udb
-                                    .build()
-                                    .map_err(|e| format!("Failed to create uridecodebin: {e}"))?;
+                                let uridecodebin = make_stream_decodebin(&uri)?;
                                 // Per-branch upstream queue (C1): decouples the decoder from
                                 // concat's gate so the next branch can pre-buffer ahead while
                                 // the current track plays. With one branch it's a passthrough.
@@ -4044,19 +4040,7 @@ fn build_appsink_pipeline(
 
     let pipe = gst::Pipeline::new();
     watch_pipeline_sources(&pipe, route);
-    let mut udb = gst::ElementFactory::make("uridecodebin").property("uri", uri);
-    if is_dash {
-        udb = udb
-            .property("buffer-duration", 15_000_000_000i64)
-            .property("use-buffering", true);
-    } else {
-        udb = udb
-            .property("buffer-duration", 5_000_000_000i64)
-            .property("use-buffering", true);
-    }
-    let uridecodebin = udb
-        .build()
-        .map_err(|e| format!("Failed to create uridecodebin: {e}"))?;
+    let uridecodebin = make_stream_decodebin(uri)?;
     let device_channels = negotiated_fmt.channels;
     let audioconvert = gst::ElementFactory::make("audioconvert")
         .build()
@@ -4971,5 +4955,111 @@ mod proxy_source_tests {
         for c in [Capability::Lossy, Capability::Dash] {
             assert_eq!(p.route_for(c).expect("direct is unaffected"), Route::NoProxy);
         }
+    }
+
+    /// Serves `body` to every connection until the test process exits. Sends
+    /// `Accept-Ranges: none` so the source never splits the download, and
+    /// handles repeat connections because the plugged HTTP source may differ
+    /// (a parallel test promotes curlhttpsrc process-wide).
+    fn serve_once_per_connection(body: Vec<u8>) -> u16 {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let body = Arc::new(body);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let body = Arc::clone(&body);
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(&stream);
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).map(|n| n > 2).unwrap_or(false) {
+                        line.clear();
+                    }
+                    let mut stream = &stream;
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: {}\r\n\
+                         Accept-Ranges: none\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(&body);
+                });
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_progressive_stream_buffers_past_the_old_two_megabyte_cap() {
+        let _ = gst::init();
+
+        // White noise barely compresses, so 40 s at 192 kHz is ~46 MB: well
+        // past both the old 2 MB cap and 25 s of uncompressed 24/192.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("noise.flac");
+        let encode = gst::parse::launch(&format!(
+            "audiotestsrc wave=white-noise num-buffers=7500 ! audioconvert ! \
+             audio/x-raw,rate=192000,channels=2 ! flacenc ! filesink location={}",
+            path.display()
+        ))
+        .expect("encode pipeline");
+        encode.set_state(gst::State::Playing).expect("encode plays");
+        let bus = encode.bus().expect("bus");
+        let msg = bus
+            .timed_pop_filtered(
+                gst::ClockTime::from_seconds(60),
+                &[gst::MessageType::Eos, gst::MessageType::Error],
+            )
+            .expect("encode finishes");
+        assert!(
+            matches!(msg.view(), gst::MessageView::Eos(_)),
+            "encode failed: {msg:?}"
+        );
+        encode.set_state(gst::State::Null).ok();
+
+        let port = serve_once_per_connection(std::fs::read(&path).expect("read flac"));
+        let pipeline = gst::Pipeline::new();
+        let udb = make_stream_decodebin(&format!("http://127.0.0.1:{port}/noise.flac"))
+            .expect("stream decodebin");
+        let sink = gst::ElementFactory::make("fakesink")
+            .property("sync", true)
+            .build()
+            .expect("fakesink");
+        pipeline.add_many([&udb, &sink]).expect("add");
+        let sink_pad = sink.static_pad("sink").expect("sink pad");
+        udb.connect_pad_added(move |_, pad| {
+            if !sink_pad.is_linked() {
+                let _ = pad.link(&sink_pad);
+            }
+        });
+        pipeline.set_state(gst::State::Paused).expect("pause");
+
+        const WANT: u32 = 25 * 1_152_000;
+        let mut level = 0u32;
+        let mut queue = None;
+        for _ in 0..150 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            queue = udb
+                .downcast_ref::<gst::Bin>()
+                .expect("uridecodebin is a bin")
+                .iterate_recurse()
+                .into_iter()
+                .flatten()
+                .find(|e| e.factory().is_some_and(|f| f.name() == "queue2"));
+            if let Some(q) = &queue {
+                level = q.property::<u32>("current-level-bytes");
+                if level >= WANT {
+                    break;
+                }
+            }
+        }
+        let max_bytes = queue
+            .as_ref()
+            .map(|q| q.property::<u32>("max-size-bytes"))
+            .unwrap_or(0);
+        pipeline.set_state(gst::State::Null).ok();
+
+        assert!(level >= WANT, "queue2 held only {level} bytes");
+        assert_eq!(max_bytes, STREAM_BUFFER_SIZE_BYTES as u32);
     }
 }
