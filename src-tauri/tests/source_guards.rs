@@ -765,6 +765,28 @@ fn every_exclusive_teardown_closes_the_sink_first() {
     );
 }
 
+/// Every fault the ALSA writer reports goes through one helper that stays
+/// silent once the writer is stopping. A stopping writer whose reopen fails
+/// would otherwise toast an error and set `tearing_down` under the next
+/// track's backend, which stops that track from advancing.
+#[test]
+fn the_writer_reports_faults_in_one_place() {
+    let body = without_comments(&audio_rs_production_source());
+    let start = body.find("fn spawn_alsa_writer(").expect("writer present");
+    let end = body.find("fn direct_alsa_seek(").expect("seek present");
+    let writer = &body[start..end];
+    assert_eq!(
+        writer.matches("emit(\"audio-error\"").count(),
+        1,
+        "emit writer faults through report_fault"
+    );
+    assert_eq!(
+        writer.matches("tearing_down.store(true").count(),
+        1,
+        "set tearing_down only through report_fault"
+    );
+}
+
 /// A write that fails because the writer is stopping must end the writer
 /// quietly. Reported as a device fault it pops a bogus "device disconnected"
 /// toast and sets `tearing_down` under the next track's backend.

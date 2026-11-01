@@ -1306,23 +1306,6 @@ fn spawn_alsa_writer(
         .name("alsa-writer".into())
         .spawn(move || {
             let sp = signal_path_thread;
-            let report_fatal = |payload: serde_json::Value| {
-                let kind = payload
-                    .get("kind")
-                    .and_then(|k| k.as_str())
-                    .unwrap_or("write_error")
-                    .to_string();
-                let message = payload
-                    .get("message")
-                    .and_then(|m| m.as_str())
-                    .map(str::to_string);
-                if fail_tx
-                    .send(AudioCommand::ExclusiveFailed { kind, message })
-                    .is_err()
-                {
-                    app_handle.emit("audio-error", payload).ok();
-                }
-            };
             let mut pcm = pcm; // rebind as mutable for format-change reopen
             let mut current_fmt = initial_format;
             let period_duration = std::time::Duration::from_millis(50);
@@ -1352,6 +1335,36 @@ fn spawn_alsa_writer(
             /// A write that ended because the writer is stopping. Never an
             /// `audio-error`: the device is fine, the writer is just leaving.
             const WRITE_STOPPED: &str = "stopped";
+
+            // Reports a writer fault unless the writer is stopping: its errors
+            // then belong to no track, and `tearing_down` already belongs to
+            // the next one (it suppresses that track's `track-finished`).
+            // Routed to the audio worker so dsone's PipeWire fallback policy runs.
+            let report_fault = |
+                app: &tauri::AppHandle,
+                tearing_down: &AtomicBool,
+                stop: &AtomicBool,
+                payload: serde_json::Value,
+                tear_down: bool,
+            | {
+                if stop.load(Ordering::Acquire) { return; }
+                let kind = payload
+                    .get("kind")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("write_error")
+                    .to_string();
+                let message = payload
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .map(str::to_string);
+                if fail_tx
+                    .send(AudioCommand::ExclusiveFailed { kind, message })
+                    .is_err()
+                {
+                    app.emit("audio-error", payload).ok();
+                }
+                if tear_down { tearing_down.store(true, Ordering::SeqCst); }
+            };
 
             enum Recovery { Recovered, Unrecoverable, Stopped }
 
@@ -1551,9 +1564,7 @@ fn spawn_alsa_writer(
                                         Err(_) => {
                                             *decoded_cell.lock().unwrap() = None;
                                             *output_cell.lock().unwrap() = None;
-                                            report_fatal(
-                                                serde_json::json!({ "kind": "device_disconnected" }));
-                                            tearing_down.store(true, Ordering::SeqCst);
+                                            report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "device_disconnected" }), true);
                                             break 'main;
                                         }
                                     }
@@ -1590,9 +1601,7 @@ fn spawn_alsa_writer(
                                             chunk.format.gst_format, chunk.format.channels,
                                             negotiated.gst_format, negotiated.channels
                                         );
-                                        report_fatal(
-                                            serde_json::json!({ "kind": "device_changed" }));
-                                        tearing_down.store(true, Ordering::SeqCst);
+                                        report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "device_changed" }), true);
                                         return;
                                     }
                                     sp.set_output(&negotiated.gst_format, negotiated.sample_rate, negotiated.channels);
@@ -1605,8 +1614,7 @@ fn spawn_alsa_writer(
                                 }
                                 Err(e) => {
                                     log::error!("[alsa-writer] reopen failed: {e}");
-                                    report_fatal( serde_json::json!({ "kind": "format_change_failed", "message": e }));
-                                    tearing_down.store(true, Ordering::SeqCst);
+                                    report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "format_change_failed", "message": e }), true);
                                     return; // pcm already dropped, just exit thread
                                 }
                             }
@@ -1618,8 +1626,7 @@ fn spawn_alsa_writer(
                             Ok(()) => {}
                             Err(WRITE_STOPPED) => break 'main,
                             Err(kind) => {
-                                report_fatal(serde_json::json!({ "kind": kind }));
-                                tearing_down.store(true, Ordering::SeqCst);
+                                report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": kind }), true);
                                 break;
                             }
                         }
@@ -1641,9 +1648,7 @@ fn spawn_alsa_writer(
                                             "[alsa-writer] channel mismatch after format-hint reopen: requested={}ch, ALSA={}ch",
                                             requested.channels, negotiated.channels
                                         );
-                                        report_fatal(
-                                            serde_json::json!({ "kind": "device_changed" }));
-                                        tearing_down.store(true, Ordering::SeqCst);
+                                        report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "device_changed" }), true);
                                         return;
                                     }
                                     sp.set_output(&negotiated.gst_format, negotiated.sample_rate, negotiated.channels);
@@ -1656,8 +1661,7 @@ fn spawn_alsa_writer(
                                 }
                                 Err(e) => {
                                     log::error!("[alsa-writer] reopen for format hint failed: {e}");
-                                    report_fatal( serde_json::json!({ "kind": "format_change_failed", "message": e }));
-                                    tearing_down.store(true, Ordering::SeqCst);
+                                    report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "format_change_failed", "message": e }), true);
                                     return;
                                 }
                             }
@@ -1693,9 +1697,7 @@ fn spawn_alsa_writer(
                             Err(_) => {
                                 *decoded_cell.lock().unwrap() = None;
                                 *output_cell.lock().unwrap() = None;
-                                report_fatal(
-                                    serde_json::json!({ "kind": "device_disconnected" }));
-                                tearing_down.store(true, Ordering::SeqCst);
+                                report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "device_disconnected" }), true);
                                 break 'main;
                             }
                         }
@@ -1716,9 +1718,7 @@ fn spawn_alsa_writer(
                                 Err(_) => {
                                     *decoded_cell.lock().unwrap() = None;
                                     *output_cell.lock().unwrap() = None;
-                                    report_fatal(
-                                        serde_json::json!({ "kind": "device_disconnected" }));
-                                    tearing_down.store(true, Ordering::SeqCst);
+                                    report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "device_disconnected" }), true);
                                     break 'main;
                                 }
                             }
@@ -1743,9 +1743,7 @@ fn spawn_alsa_writer(
                                                         chunk.format.gst_format, chunk.format.channels,
                                                         negotiated.gst_format, negotiated.channels
                                                     );
-                                                    report_fatal(
-                                                        serde_json::json!({ "kind": "device_changed" }));
-                                                    tearing_down.store(true, Ordering::SeqCst);
+                                                    report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "device_changed" }), true);
                                                     return;
                                                 }
                                                 sp.set_output(&negotiated.gst_format, negotiated.sample_rate, negotiated.channels);
@@ -1758,7 +1756,7 @@ fn spawn_alsa_writer(
                                             }
                                             Err(e) => {
                                                 log::error!("[alsa-writer] reopen failed in idle: {e}");
-                                                report_fatal( serde_json::json!({ "kind": "format_change_failed", "message": e }));
+                                                report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "format_change_failed", "message": e }), false);
                                                 return;
                                             }
                                         }
@@ -1774,7 +1772,7 @@ fn spawn_alsa_writer(
                                         Ok(()) => {}
                                         Err(WRITE_STOPPED) => break 'main,
                                         Err(kind) => {
-                                            report_fatal(serde_json::json!({ "kind": kind }));
+                                            report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": kind }), false);
                                             break 'main;
                                         }
                                     }
@@ -1803,9 +1801,7 @@ fn spawn_alsa_writer(
                                                         "[alsa-writer] channel mismatch after format-hint reopen (idle): requested={}ch, ALSA={}ch",
                                                         requested.channels, negotiated.channels
                                                     );
-                                                    report_fatal(
-                                                        serde_json::json!({ "kind": "device_changed" }));
-                                                    tearing_down.store(true, Ordering::SeqCst);
+                                                    report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "device_changed" }), true);
                                                     return;
                                                 }
                                                 sp.set_output(&negotiated.gst_format, negotiated.sample_rate, negotiated.channels);
@@ -1818,7 +1814,7 @@ fn spawn_alsa_writer(
                                             }
                                             Err(e) => {
                                                 log::error!("[alsa-writer] reopen for format hint failed (idle): {e}");
-                                                report_fatal( serde_json::json!({ "kind": "format_change_failed", "message": e }));
+                                                report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "format_change_failed", "message": e }), false);
                                                 return;
                                             }
                                         }
@@ -1862,9 +1858,7 @@ fn spawn_alsa_writer(
                             Err(_) => {
                                 *decoded_cell.lock().unwrap() = None;
                                 *output_cell.lock().unwrap() = None;
-                                report_fatal(
-                                    serde_json::json!({ "kind": "device_disconnected" }));
-                                tearing_down.store(true, Ordering::SeqCst);
+                                report_fault(&app_handle, &tearing_down, &stop, serde_json::json!({ "kind": "device_disconnected" }), true);
                                 break 'main;
                             }
                         }
