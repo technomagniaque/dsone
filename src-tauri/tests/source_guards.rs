@@ -752,6 +752,24 @@ fn the_appsink_never_blocks_on_the_writer() {
     );
 }
 
+/// A write that fails because the writer is stopping must end the writer
+/// quietly. Reported as a device fault it pops a bogus "device disconnected"
+/// toast and sets `tearing_down` under the next track's backend.
+#[test]
+fn a_stopped_write_is_never_reported_as_a_device_fault() {
+    let body = without_comments(&audio_rs_production_source());
+    assert_eq!(
+        body.matches("if !write_silence(").count(),
+        0,
+        "write_silence must return a Result so a stop can be told apart from a fault"
+    );
+    assert_eq!(
+        body.matches("Err(WRITE_STOPPED) =>").count(),
+        6,
+        "every write call site must handle WRITE_STOPPED before reporting an error"
+    );
+}
+
 /// Every worker-side writer stop goes through `shutdown_writer`, whose wait is
 /// bounded. An ad-hoc Shutdown plus `join()` hung the audio thread for good.
 #[test]

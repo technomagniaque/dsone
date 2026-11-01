@@ -443,6 +443,35 @@ fn shutdown_writer(
     None
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq)]
+enum ResumeOutcome {
+    Resumed,
+    Failed,
+    Stopped,
+}
+
+/// Waits out a suspended device (`resume` keeps returning EAGAIN until the
+/// system wakes), but gives up as soon as the writer is told to stop.
+#[cfg(target_os = "linux")]
+fn retry_resume(
+    mut resume: impl FnMut() -> Result<(), i32>,
+    stop: &AtomicBool,
+) -> ResumeOutcome {
+    loop {
+        match resume() {
+            Ok(()) => return ResumeOutcome::Resumed,
+            Err(libc::EAGAIN) => {
+                if stop.load(Ordering::Acquire) {
+                    return ResumeOutcome::Stopped;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(_) => return ResumeOutcome::Failed,
+        }
+    }
+}
+
 /// Active playback backend — determines command dispatch.
 /// The ALSA writer sender + thread handle live as separate state variables
 /// so they persist across PlayUrl calls (track changes keep DAC open).
@@ -1293,40 +1322,41 @@ fn spawn_alsa_writer(
             };
 
             // Recover from ALSA errors (XRUN, suspend, etc.)
-            fn alsa_recover(pcm: &alsa::PCM, errno: i32) -> bool {
+            /// A write that ended because the writer is stopping. Never an
+            /// `audio-error`: the device is fine, the writer is just leaving.
+            const WRITE_STOPPED: &str = "stopped";
+
+            enum Recovery { Recovered, Unrecoverable, Stopped }
+
+            fn alsa_recover(pcm: &alsa::PCM, errno: i32, stop: &AtomicBool) -> Recovery {
                 if errno == libc::EPIPE {
                     log::warn!("[alsa-writer] XRUN, recovering");
                     pcm.prepare().ok();
-                    true
+                    Recovery::Recovered
                 } else if errno == libc::ESTRPIPE {
-                    let mut recovered = false;
-                    loop {
-                        match pcm.resume() {
-                            Ok(_) => { recovered = true; break; }
-                            Err(e) if e.errno() == libc::EAGAIN => {
-                                std::thread::sleep(std::time::Duration::from_millis(10));
-                            }
-                            Err(_) => {
-                                if pcm.prepare().is_ok() { recovered = true; }
-                                break;
-                            }
-                        }
+                    match retry_resume(|| pcm.resume().map_err(|e| e.errno()), stop) {
+                        ResumeOutcome::Resumed => Recovery::Recovered,
+                        ResumeOutcome::Stopped => Recovery::Stopped,
+                        ResumeOutcome::Failed if pcm.prepare().is_ok() => Recovery::Recovered,
+                        ResumeOutcome::Failed => Recovery::Unrecoverable,
                     }
-                    recovered
                 } else {
-                    false
+                    Recovery::Unrecoverable
                 }
             }
 
-            fn write_bytes(pcm: &alsa::PCM, data: &[u8], fmt: &PcmFormat, fw: &AtomicU64, silence_buf: &[u8]) -> Result<(), &'static str> {
+            fn write_bytes(pcm: &alsa::PCM, data: &[u8], fmt: &PcmFormat, fw: &AtomicU64, silence_buf: &[u8], stop: &AtomicBool) -> Result<(), &'static str> {
                 let frame_size = fmt.channels as usize * fmt.bytes_per_sample as usize;
                 if frame_size == 0 { return Ok(()); }
                 let mut offset = 0;
                 while offset < data.len() {
+                    if stop.load(Ordering::Acquire) { return Err(WRITE_STOPPED); }
                     let result = {
                         let io = pcm.io_bytes();
                         io.writei(&data[offset..])
                     }; // io dropped here — flag cleared before any recovery
+                    // `frames_written` belongs to the next writer once we are stopping.
+                    if stop.load(Ordering::Acquire) { return Err(WRITE_STOPPED); }
                     match result {
                         Ok(0) => break, // sub-frame remnant
                         Ok(frames) => {
@@ -1335,16 +1365,21 @@ fn spawn_alsa_writer(
                         }
                         Err(e) => {
                             let errno = e.errno();
-                            if alsa_recover(pcm, errno) {
-                                let kick_frames = (fmt.sample_rate as usize * 50) / 1000;
-                                let kick_bytes = kick_frames * frame_size;
-                                let io = pcm.io_bytes();
-                                let _ = io.writei(&silence_buf[..kick_bytes.min(silence_buf.len())]);
-                            } else if errno == libc::ENODEV {
-                                return Err("device_disconnected");
-                            } else {
-                                log::error!("[alsa-writer] write error: {e}");
-                                return Err("write_error");
+                            match alsa_recover(pcm, errno, stop) {
+                                Recovery::Recovered => {
+                                    let kick_frames = (fmt.sample_rate as usize * 50) / 1000;
+                                    let kick_bytes = kick_frames * frame_size;
+                                    let io = pcm.io_bytes();
+                                    let _ = io.writei(&silence_buf[..kick_bytes.min(silence_buf.len())]);
+                                }
+                                Recovery::Stopped => return Err(WRITE_STOPPED),
+                                Recovery::Unrecoverable if errno == libc::ENODEV => {
+                                    return Err("device_disconnected");
+                                }
+                                Recovery::Unrecoverable => {
+                                    log::error!("[alsa-writer] write error: {e}");
+                                    return Err("write_error");
+                                }
                             }
                         }
                     }
@@ -1352,23 +1387,27 @@ fn spawn_alsa_writer(
                 Ok(())
             }
 
-            fn write_silence(pcm: &alsa::PCM, buf: &[u8]) -> bool {
+            fn write_silence(pcm: &alsa::PCM, buf: &[u8], stop: &AtomicBool) -> Result<(), &'static str> {
                 let result = {
                     let io = pcm.io_bytes();
                     io.writei(buf)
                 }; // io dropped here
+                if stop.load(Ordering::Acquire) { return Err(WRITE_STOPPED); }
                 match result {
-                    Ok(_) => {}
-                    Err(e) if alsa_recover(pcm, e.errno()) => {
-                        let io = pcm.io_bytes();
-                        let _ = io.writei(buf);
-                    }
-                    Err(e) => {
-                        log::error!("[alsa-writer] silence write error: {e}");
-                        return false;
-                    }
+                    Ok(_) => Ok(()),
+                    Err(e) => match alsa_recover(pcm, e.errno(), stop) {
+                        Recovery::Recovered => {
+                            let io = pcm.io_bytes();
+                            let _ = io.writei(buf);
+                            Ok(())
+                        }
+                        Recovery::Stopped => Err(WRITE_STOPPED),
+                        Recovery::Unrecoverable => {
+                            log::error!("[alsa-writer] silence write error: {e}");
+                            Err("device_disconnected")
+                        }
+                    },
                 }
-                true
             }
 
             /// Scale raw PCM samples in-place by a volume multiplier.
@@ -1479,13 +1518,17 @@ fn spawn_alsa_writer(
                                     std::thread::sleep(std::time::Duration::from_millis(50));
                                 } else {
                                     // SW pause: blocking writei paces the thread (~50ms per period)
-                                    if !write_silence(&pcm, &silence_buf) {
-                                        *decoded_cell.lock().unwrap() = None;
-                                        *output_cell.lock().unwrap() = None;
-                                        report_fatal(
-                                            serde_json::json!({ "kind": "device_disconnected" }));
-                                        tearing_down.store(true, Ordering::SeqCst);
-                                        break 'main;
+                                    match write_silence(&pcm, &silence_buf, &stop) {
+                                        Ok(()) => {}
+                                        Err(WRITE_STOPPED) => break 'main,
+                                        Err(_) => {
+                                            *decoded_cell.lock().unwrap() = None;
+                                            *output_cell.lock().unwrap() = None;
+                                            report_fatal(
+                                                serde_json::json!({ "kind": "device_disconnected" }));
+                                            tearing_down.store(true, Ordering::SeqCst);
+                                            break 'main;
+                                        }
                                     }
                                 }
                             }
@@ -1544,10 +1587,14 @@ fn spawn_alsa_writer(
                         resolve_pending(&mut pending_promotion_from, &current_fmt);
                         let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
                         apply_volume(&mut chunk.data, &current_fmt, vol);
-                        if let Err(kind) = write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf) {
-                            report_fatal( serde_json::json!({ "kind": kind }));
-                            tearing_down.store(true, Ordering::SeqCst);
-                            break;
+                        match write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf, &stop) {
+                            Ok(()) => {}
+                            Err(WRITE_STOPPED) => break 'main,
+                            Err(kind) => {
+                                report_fatal(serde_json::json!({ "kind": kind }));
+                                tearing_down.store(true, Ordering::SeqCst);
+                                break;
+                            }
                         }
                     }
 
@@ -1613,13 +1660,17 @@ fn spawn_alsa_writer(
                             continue; // stale EOS from old pipeline
                         }
                         let got_shutdown = drain_writer_rx(&rx);
-                        if !write_silence(&pcm, &silence_buf) {
-                            *decoded_cell.lock().unwrap() = None;
-                            *output_cell.lock().unwrap() = None;
-                            report_fatal(
-                                serde_json::json!({ "kind": "device_disconnected" }));
-                            tearing_down.store(true, Ordering::SeqCst);
-                            break 'main;
+                        match write_silence(&pcm, &silence_buf, &stop) {
+                            Ok(()) => {}
+                            Err(WRITE_STOPPED) => break 'main,
+                            Err(_) => {
+                                *decoded_cell.lock().unwrap() = None;
+                                *output_cell.lock().unwrap() = None;
+                                report_fatal(
+                                    serde_json::json!({ "kind": "device_disconnected" }));
+                                tearing_down.store(true, Ordering::SeqCst);
+                                break 'main;
+                            }
                         }
 
                         if emit_finished && !tearing_down.load(Ordering::SeqCst) {
@@ -1632,13 +1683,17 @@ fn spawn_alsa_writer(
                         // Idle silence loop — keep DAC clock alive between tracks
                         log::debug!("[alsa-writer] entering idle silence loop");
                         loop {
-                            if !write_silence(&pcm, &silence_buf) {
-                                *decoded_cell.lock().unwrap() = None;
-                                *output_cell.lock().unwrap() = None;
-                                report_fatal(
-                                    serde_json::json!({ "kind": "device_disconnected" }));
-                                tearing_down.store(true, Ordering::SeqCst);
-                                break 'main;
+                            match write_silence(&pcm, &silence_buf, &stop) {
+                                Ok(()) => {}
+                                Err(WRITE_STOPPED) => break 'main,
+                                Err(_) => {
+                                    *decoded_cell.lock().unwrap() = None;
+                                    *output_cell.lock().unwrap() = None;
+                                    report_fatal(
+                                        serde_json::json!({ "kind": "device_disconnected" }));
+                                    tearing_down.store(true, Ordering::SeqCst);
+                                    break 'main;
+                                }
                             }
                             let received = rx.try_recv();
                             if stop.load(Ordering::Acquire) { break 'main; }
@@ -1688,9 +1743,13 @@ fn spawn_alsa_writer(
                                     resolve_pending(&mut pending_promotion_from, &current_fmt);
                                     let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
                                     apply_volume(&mut chunk.data, &current_fmt, vol);
-                                    if let Err(kind) = write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf) {
-                                        report_fatal( serde_json::json!({ "kind": kind }));
-                                        break 'main;
+                                    match write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf, &stop) {
+                                        Ok(()) => {}
+                                        Err(WRITE_STOPPED) => break 'main,
+                                        Err(kind) => {
+                                            report_fatal(serde_json::json!({ "kind": kind }));
+                                            break 'main;
+                                        }
                                     }
                                     break; // back to main loop
                                 }
@@ -1770,13 +1829,17 @@ fn spawn_alsa_writer(
                     }
 
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        if !write_silence(&pcm, &silence_buf) {
-                            *decoded_cell.lock().unwrap() = None;
-                            *output_cell.lock().unwrap() = None;
-                            report_fatal(
-                                serde_json::json!({ "kind": "device_disconnected" }));
-                            tearing_down.store(true, Ordering::SeqCst);
-                            break 'main;
+                        match write_silence(&pcm, &silence_buf, &stop) {
+                            Ok(()) => {}
+                            Err(WRITE_STOPPED) => break 'main,
+                            Err(_) => {
+                                *decoded_cell.lock().unwrap() = None;
+                                *output_cell.lock().unwrap() = None;
+                                report_fatal(
+                                    serde_json::json!({ "kind": "device_disconnected" }));
+                                tearing_down.store(true, Ordering::SeqCst);
+                                break 'main;
+                            }
                         }
                     }
 
@@ -5296,6 +5359,47 @@ mod proxy_source_tests {
         let left = left.expect("a wedged writer must be handed back, not joined");
         release.wait();
         left.join().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resume_retry_returns_once_the_device_comes_back() {
+        let stop = AtomicBool::new(false);
+        let mut tries = 0;
+        let outcome = retry_resume(
+            || {
+                tries += 1;
+                if tries <= 3 {
+                    Err(libc::EAGAIN)
+                } else {
+                    Ok(())
+                }
+            },
+            &stop,
+        );
+        assert_eq!(outcome, ResumeOutcome::Resumed);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resume_retry_ends_when_the_writer_is_stopped() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let setter = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            setter.store(true, Ordering::Release);
+        });
+        let outcome = within(std::time::Duration::from_secs(1), move || {
+            retry_resume(|| Err(libc::EAGAIN), &stop)
+        });
+        assert_eq!(outcome, ResumeOutcome::Stopped);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resume_retry_fails_on_other_errors() {
+        let stop = AtomicBool::new(false);
+        assert_eq!(retry_resume(|| Err(libc::EIO), &stop), ResumeOutcome::Failed);
     }
 
     #[test]
