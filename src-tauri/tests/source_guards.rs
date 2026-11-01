@@ -752,6 +752,26 @@ fn the_appsink_never_blocks_on_the_writer() {
     );
 }
 
+/// Every worker-side writer stop goes through `shutdown_writer`, whose wait is
+/// bounded. An ad-hoc Shutdown plus `join()` hung the audio thread for good.
+#[test]
+fn the_worker_never_waits_unbounded_on_the_writer() {
+    let body = without_comments(&audio_rs_production_source());
+    for (needle, want) in [
+        ("try_send(WriterCommand::Shutdown)", 1),
+        (".send(WriterCommand::Shutdown)", 0),
+        ("WriterCommand::Shutdown,", 0),
+        (".send(WriterCommand::Flush)", 0),
+    ] {
+        assert_eq!(
+            body.matches(needle).count(),
+            want,
+            "`{needle}`: stop writers through shutdown_writer and never block \
+             the worker on a send to the writer"
+        );
+    }
+}
+
 /// With no proxy, `souphttpsrc` must win HTTP source selection over
 /// `curlhttpsrc`, which is true only while soup outranks curl in the registry.
 ///
