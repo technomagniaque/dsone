@@ -443,6 +443,34 @@ fn shutdown_writer(
     None
 }
 
+const WRITER_REAP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// Gives writers that missed their shutdown deadline a bounded chance to exit
+/// before the device is opened again. Their stop flag is already set, so a
+/// writer stuck in one slow ALSA call leaves as soon as that call returns.
+fn reap_lingering_writers(lingering: &mut Vec<JoinHandle<()>>, timeout: std::time::Duration) {
+    if lingering.is_empty() {
+        return;
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    while lingering.iter().any(|h| !h.is_finished()) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let (done, running): (Vec<_>, Vec<_>) = std::mem::take(lingering)
+        .into_iter()
+        .partition(|h| h.is_finished());
+    for h in done {
+        h.join().ok();
+    }
+    *lingering = running;
+    if !lingering.is_empty() {
+        log::warn!(
+            "[audio] {} previous exclusive writer(s) still running; the device may be busy",
+            lingering.len()
+        );
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq)]
 enum ResumeOutcome {
@@ -454,10 +482,7 @@ enum ResumeOutcome {
 /// Waits out a suspended device (`resume` keeps returning EAGAIN until the
 /// system wakes), but gives up as soon as the writer is told to stop.
 #[cfg(target_os = "linux")]
-fn retry_resume(
-    mut resume: impl FnMut() -> Result<(), i32>,
-    stop: &AtomicBool,
-) -> ResumeOutcome {
+fn retry_resume(mut resume: impl FnMut() -> Result<(), i32>, stop: &AtomicBool) -> ResumeOutcome {
     loop {
         match resume() {
             Ok(()) => return ResumeOutcome::Resumed,
@@ -2364,6 +2389,10 @@ impl AudioPlayer {
                                             &paused,
                                             WRITER_SHUTDOWN_TIMEOUT,
                                         ));
+                                        reap_lingering_writers(
+                                            &mut lingering_writers,
+                                            WRITER_REAP_TIMEOUT,
+                                        );
                                         let stop = Arc::new(AtomicBool::new(false));
                                         let (tx, handle, negotiated_fmt, supported_gst_fmts, supported_rates) = spawn_alsa_writer(
                                             dev,
@@ -2499,6 +2528,8 @@ impl AudioPlayer {
                                     &paused,
                                     WRITER_SHUTDOWN_TIMEOUT,
                                 ));
+                                // The sound server can't take a DAC an old writer still holds.
+                                reap_lingering_writers(&mut lingering_writers, WRITER_REAP_TIMEOUT);
 
                                 let pipe = gst::Pipeline::new();
                                 watch_pipeline_sources(&pipe, route);
@@ -5296,7 +5327,10 @@ mod proxy_source_tests {
             let paused = AtomicBool::new(false);
             shutdown_writer(Some(tx), Some(handle), Some(stop), &paused, TEST_SHUTDOWN)
         });
-        assert!(left.is_none(), "the stop flag must end a writer the queue can't reach");
+        assert!(
+            left.is_none(),
+            "the stop flag must end a writer the queue can't reach"
+        );
     }
 
     #[test]
@@ -5317,7 +5351,10 @@ mod proxy_source_tests {
         let left = within(TEST_LIMIT, move || {
             shutdown_writer(Some(tx), Some(handle), None, &paused, TEST_SHUTDOWN)
         });
-        assert!(left.is_none(), "shutdown must unpause the writer so it reads Shutdown");
+        assert!(
+            left.is_none(),
+            "shutdown must unpause the writer so it reads Shutdown"
+        );
     }
 
     #[test]
@@ -5399,7 +5436,43 @@ mod proxy_source_tests {
     #[test]
     fn resume_retry_fails_on_other_errors() {
         let stop = AtomicBool::new(false);
-        assert_eq!(retry_resume(|| Err(libc::EIO), &stop), ResumeOutcome::Failed);
+        assert_eq!(
+            retry_resume(|| Err(libc::EIO), &stop),
+            ResumeOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn lingering_writers_that_finish_are_reaped_early() {
+        let mut lingering = vec![std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        })];
+        let started = std::time::Instant::now();
+        reap_lingering_writers(&mut lingering, std::time::Duration::from_secs(1));
+        assert!(lingering.is_empty(), "a finished writer must be reaped");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "reaping must not wait out the deadline once every writer is done"
+        );
+    }
+
+    #[test]
+    fn lingering_writer_still_running_at_the_deadline_is_kept() {
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let held = Arc::clone(&release);
+        let mut lingering = vec![std::thread::spawn(move || {
+            held.wait();
+        })];
+        let started = std::time::Instant::now();
+        reap_lingering_writers(&mut lingering, std::time::Duration::from_millis(200));
+        assert_eq!(
+            lingering.len(),
+            1,
+            "a writer still running must be kept, not joined"
+        );
+        assert!(started.elapsed() >= std::time::Duration::from_millis(200));
+        release.wait();
+        lingering.pop().unwrap().join().unwrap();
     }
 
     #[test]
