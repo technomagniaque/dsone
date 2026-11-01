@@ -380,6 +380,36 @@ enum WriterCommand {
     Shutdown,
 }
 
+const WRITER_SEND_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Hands a chunk to the writer, waiting while it is busy but giving up once
+/// teardown has bumped the generation. A plain blocking send here stalls the
+/// pipeline's state change forever behind a writer that is not reading (#233).
+fn send_chunk(
+    tx: &crossbeam_channel::Sender<WriterCommand>,
+    chunk: AudioChunk,
+    current_gen: &AtomicU64,
+    poll: std::time::Duration,
+) -> Result<(), gst::FlowError> {
+    let mut cmd = WriterCommand::Data(chunk);
+    loop {
+        match tx.send_timeout(cmd, poll) {
+            Ok(()) => return Ok(()),
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return Err(gst::FlowError::Error)
+            }
+            Err(crossbeam_channel::SendTimeoutError::Timeout(back)) => {
+                if let WriterCommand::Data(ref c) = back {
+                    if c.generation < current_gen.load(Ordering::Acquire) {
+                        return Err(gst::FlowError::Flushing);
+                    }
+                }
+                cmd = back;
+            }
+        }
+    }
+}
+
 /// Active playback backend — determines command dispatch.
 /// The ALSA writer sender + thread handle live as separate state variables
 /// so they persist across PlayUrl calls (track changes keep DAC open).
@@ -4397,15 +4427,17 @@ fn build_appsink_pipeline(
                 let data = map.as_slice().to_vec();
                 let generation = chunk_gen.load(Ordering::Acquire);
 
-                writer_tx
-                    .send(WriterCommand::Data(AudioChunk {
+                send_chunk(
+                    &writer_tx,
+                    AudioChunk {
                         data,
                         format,
                         generation,
-                    }))
-                    .map_err(|_| gst::FlowError::Error)?;
-
-                Ok(gst::FlowSuccess::Ok)
+                    },
+                    &chunk_gen,
+                    WRITER_SEND_POLL,
+                )
+                .map(|_| gst::FlowSuccess::Ok)
             })
             .build(),
     );
@@ -5070,5 +5102,77 @@ mod proxy_source_tests {
 
         assert!(level >= WANT, "queue2 held only {level} bytes");
         assert_eq!(max_bytes, STREAM_BUFFER_SIZE_BYTES as u32);
+    }
+
+    fn test_chunk(generation: u64) -> AudioChunk {
+        AudioChunk {
+            data: vec![0; 8],
+            format: PcmFormat {
+                sample_rate: 44_100,
+                channels: 2,
+                gst_format: "S16LE".into(),
+                bytes_per_sample: 2,
+            },
+            generation,
+        }
+    }
+
+    /// Runs `f` on its own thread so a regression that blocks fails the test
+    /// instead of hanging the suite.
+    fn within<T: Send + 'static>(
+        limit: std::time::Duration,
+        f: impl FnOnce() -> T + Send + 'static,
+    ) -> T {
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done_tx.send(f());
+        });
+        done_rx
+            .recv_timeout(limit)
+            .expect("still blocked past the limit")
+    }
+
+    #[test]
+    fn a_chunk_send_gives_up_once_its_generation_is_stale() {
+        let (tx, _rx) = crossbeam_channel::bounded::<WriterCommand>(1);
+        tx.send(WriterCommand::Flush).unwrap();
+        let current = Arc::new(AtomicU64::new(1));
+        let bump = Arc::clone(&current);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            bump.store(2, Ordering::Release);
+        });
+        let result = within(std::time::Duration::from_secs(2), move || {
+            send_chunk(&tx, test_chunk(1), &current, WRITER_SEND_POLL)
+        });
+        assert_eq!(result, Err(gst::FlowError::Flushing));
+    }
+
+    #[test]
+    fn a_chunk_send_waits_for_a_slow_writer_of_the_same_generation() {
+        let (tx, rx) = crossbeam_channel::bounded::<WriterCommand>(1);
+        tx.send(WriterCommand::Flush).unwrap();
+        let reader = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let _ = rx.recv();
+            let _ = rx.recv();
+        });
+        let current = Arc::new(AtomicU64::new(1));
+        let result = within(std::time::Duration::from_secs(2), move || {
+            send_chunk(&tx, test_chunk(1), &current, WRITER_SEND_POLL)
+        });
+        assert_eq!(result, Ok(()));
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn a_chunk_send_to_a_gone_writer_is_an_error() {
+        let (tx, rx) = crossbeam_channel::bounded::<WriterCommand>(1);
+        drop(rx);
+        let current = AtomicU64::new(1);
+        assert_eq!(
+            send_chunk(&tx, test_chunk(1), &current, WRITER_SEND_POLL),
+            Err(gst::FlowError::Error)
+        );
     }
 }

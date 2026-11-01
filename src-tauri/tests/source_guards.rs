@@ -739,6 +739,19 @@ fn a_flush_never_swallows_a_writer_shutdown() {
     );
 }
 
+/// A blocking send from the appsink callback holds the sink's preroll lock,
+/// so a writer that stops reading freezes `set_state(Null)` on the worker.
+#[test]
+fn the_appsink_never_blocks_on_the_writer() {
+    let body = without_comments(&audio_rs_production_source());
+    assert_eq!(
+        body.matches(".send(WriterCommand::Data(").count(),
+        0,
+        "hand chunks to the writer through send_chunk, which gives up once \
+         teardown bumps the generation"
+    );
+}
+
 /// With no proxy, `souphttpsrc` must win HTTP source selection over
 /// `curlhttpsrc`, which is true only while soup outranks curl in the registry.
 ///
