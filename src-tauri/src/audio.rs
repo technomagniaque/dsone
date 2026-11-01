@@ -383,12 +383,14 @@ enum WriterCommand {
 const WRITER_SEND_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Hands a chunk to the writer, waiting while it is busy but giving up once
-/// teardown has bumped the generation. A plain blocking send here stalls the
+/// this pipeline is being torn down. A plain blocking send here stalls the
 /// pipeline's state change forever behind a writer that is not reading (#233).
+/// Keyed on teardown, not the generation: a seek bumps the generation while
+/// the pipeline keeps running, and giving up there pauses the stream.
 fn send_chunk(
     tx: &crossbeam_channel::Sender<WriterCommand>,
     chunk: AudioChunk,
-    current_gen: &AtomicU64,
+    closing: &AtomicBool,
     poll: std::time::Duration,
 ) -> Result<(), gst::FlowError> {
     let mut cmd = WriterCommand::Data(chunk);
@@ -399,10 +401,8 @@ fn send_chunk(
                 return Err(gst::FlowError::Error)
             }
             Err(crossbeam_channel::SendTimeoutError::Timeout(back)) => {
-                if let WriterCommand::Data(ref c) = back {
-                    if c.generation < current_gen.load(Ordering::Acquire) {
-                        return Err(gst::FlowError::Flushing);
-                    }
+                if closing.load(Ordering::Acquire) {
+                    return Err(gst::FlowError::Flushing);
                 }
                 cmd = back;
             }
@@ -515,6 +515,8 @@ enum PlaybackBackend {
         pipeline: gst::Pipeline,
         user_volume_el: Option<gst::Element>,
         norm_volume_el: Option<gst::Element>,
+        /// This pipeline's appsink gives up waiting on the writer once set.
+        sink_closing: Arc<AtomicBool>,
     },
 }
 
@@ -2265,7 +2267,7 @@ impl AudioPlayer {
                                             old_pipe.set_state(gst::State::Null).ok();
                                         });
                                     }
-                                    PlaybackBackend::DirectAlsa { pipeline, .. } => {
+                                    PlaybackBackend::DirectAlsa { pipeline, sink_closing, .. } => {
                                         // Unblock writer if paused, then bump generation —
                                         // writer instantly discards stale Data, channel
                                         // drains fast, pipeline can reach Null without blocking.
@@ -2281,6 +2283,7 @@ impl AudioPlayer {
                                         if let Some(bus) = pipeline.bus() {
                                             bus.set_flushing(true);
                                         }
+                                        sink_closing.store(true, Ordering::Release);
                                         pipeline.set_state(gst::State::Null).ok();
                                         let _ = pipeline.state(gst::ClockTime::from_mseconds(500));
                                         drop(pipeline);
@@ -2427,6 +2430,7 @@ impl AudioPlayer {
                                     let fmt_for_pipeline = writer_fmt.as_ref().unwrap_or(&default_fmt);
                                     let supported_fmts_for_pipeline = writer_supported_fmts.as_deref().unwrap_or(&["S32LE"]);
                                     let supported_rates_for_pipeline = writer_supported_rates.as_deref().unwrap_or(&[44100, 48000]);
+                                    let sink_closing = Arc::new(AtomicBool::new(false));
                                     let (pipe, u_vol, n_vol) = build_appsink_pipeline(
                                         &uri,
                                         is_dash,
@@ -2435,6 +2439,7 @@ impl AudioPlayer {
                                         bit_perfect,
                                         wtx.clone(),
                                         Arc::clone(&writer_gen),
+                                        Arc::clone(&sink_closing),
                                         fmt_for_pipeline,
                                         supported_fmts_for_pipeline,
                                         supported_rates_for_pipeline,
@@ -2516,6 +2521,7 @@ impl AudioPlayer {
                                         pipeline: pipe,
                                         user_volume_el: u_vol,
                                         norm_volume_el: n_vol,
+                                        sink_closing,
                                     });
                                 }
                             } else {
@@ -3149,7 +3155,7 @@ impl AudioPlayer {
                                 *output_cell_thread.lock().unwrap() = None;
                                 Ok(())
                             }
-                            Some(PlaybackBackend::DirectAlsa { pipeline, .. }) => {
+                            Some(PlaybackBackend::DirectAlsa { pipeline, sink_closing, .. }) => {
                                 // Bump generation so writer discards stale data,
                                 // then unblock and shut down
                                 paused.store(false, Ordering::Release);
@@ -3158,9 +3164,10 @@ impl AudioPlayer {
                                 if let Some(bus) = pipeline.bus() {
                                     bus.set_flushing(true);
                                 }
-                                // The bumped generation lets a blocked appsink
-                                // callback give up, so the pipeline reaches Null
-                                // even while the writer is not reading.
+                                // Lets a blocked appsink callback give up, so the
+                                // pipeline reaches Null even while the writer is
+                                // not reading.
+                                sink_closing.store(true, Ordering::Release);
                                 pipeline.set_state(gst::State::Null).ok();
                                 let _ = pipeline.state(gst::ClockTime::from_mseconds(500));
                                 drop(pipeline);
@@ -4191,6 +4198,8 @@ fn build_appsink_pipeline(
     bit_perfect: bool,
     writer_tx: crossbeam_channel::Sender<WriterCommand>,
     writer_gen: Arc<AtomicU64>,
+    // Set by teardown before Null, so the appsink stops waiting on the writer.
+    sink_closing: Arc<AtomicBool>,
     // The ALSA writer's negotiated device format. Its channel count drives the
     // stereo→Nch upmix (mix-matrix) and the capsfilter / appsink channel pin
     // when the DAC exposes only a fixed channel count (> 2).
@@ -4559,7 +4568,7 @@ fn build_appsink_pipeline(
                         format,
                         generation,
                     },
-                    &chunk_gen,
+                    &sink_closing,
                     WRITER_SEND_POLL,
                 )
                 .map(|_| gst::FlowSuccess::Ok)
@@ -5258,36 +5267,19 @@ mod proxy_source_tests {
     }
 
     #[test]
-    fn a_chunk_send_gives_up_once_its_generation_is_stale() {
+    fn a_chunk_send_gives_up_once_the_sink_is_closing() {
         let (tx, _rx) = crossbeam_channel::bounded::<WriterCommand>(1);
         tx.send(WriterCommand::Flush).unwrap();
-        let current = Arc::new(AtomicU64::new(1));
-        let bump = Arc::clone(&current);
+        let closing = Arc::new(AtomicBool::new(false));
+        let close = Arc::clone(&closing);
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(100));
-            bump.store(2, Ordering::Release);
+            close.store(true, Ordering::Release);
         });
         let result = within(std::time::Duration::from_secs(2), move || {
-            send_chunk(&tx, test_chunk(1), &current, WRITER_SEND_POLL)
+            send_chunk(&tx, test_chunk(1), &closing, WRITER_SEND_POLL)
         });
         assert_eq!(result, Err(gst::FlowError::Flushing));
-    }
-
-    #[test]
-    fn a_chunk_send_waits_for_a_slow_writer_of_the_same_generation() {
-        let (tx, rx) = crossbeam_channel::bounded::<WriterCommand>(1);
-        tx.send(WriterCommand::Flush).unwrap();
-        let reader = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            let _ = rx.recv();
-            let _ = rx.recv();
-        });
-        let current = Arc::new(AtomicU64::new(1));
-        let result = within(std::time::Duration::from_secs(2), move || {
-            send_chunk(&tx, test_chunk(1), &current, WRITER_SEND_POLL)
-        });
-        assert_eq!(result, Ok(()));
-        reader.join().unwrap();
     }
 
     const TEST_SHUTDOWN: std::time::Duration = std::time::Duration::from_millis(200);
@@ -5475,13 +5467,33 @@ mod proxy_source_tests {
         lingering.pop().unwrap().join().unwrap();
     }
 
+    /// A seek bumps the generation while the pipeline keeps running. Giving up
+    /// there returns Flushing, which pauses the stream for good if the seek
+    /// then fails — so a slow writer is waited for until teardown.
+    #[test]
+    fn a_chunk_send_keeps_waiting_through_a_seek() {
+        let (tx, rx) = crossbeam_channel::bounded::<WriterCommand>(1);
+        tx.send(WriterCommand::Flush).unwrap();
+        let reader = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let _ = rx.recv();
+            let _ = rx.recv();
+        });
+        let closing = Arc::new(AtomicBool::new(false));
+        let result = within(std::time::Duration::from_secs(2), move || {
+            send_chunk(&tx, test_chunk(1), &closing, WRITER_SEND_POLL)
+        });
+        assert_eq!(result, Ok(()));
+        reader.join().unwrap();
+    }
+
     #[test]
     fn a_chunk_send_to_a_gone_writer_is_an_error() {
         let (tx, rx) = crossbeam_channel::bounded::<WriterCommand>(1);
         drop(rx);
-        let current = AtomicU64::new(1);
+        let closing = AtomicBool::new(false);
         assert_eq!(
-            send_chunk(&tx, test_chunk(1), &current, WRITER_SEND_POLL),
+            send_chunk(&tx, test_chunk(1), &closing, WRITER_SEND_POLL),
             Err(gst::FlowError::Error)
         );
     }

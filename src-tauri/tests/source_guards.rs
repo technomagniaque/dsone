@@ -752,6 +752,19 @@ fn the_appsink_never_blocks_on_the_writer() {
     );
 }
 
+/// Both DirectAlsa teardowns (track change and Stop) must tell the appsink to
+/// stop waiting on the writer before `set_state(Null)`, or a writer that is
+/// not reading freezes the worker there.
+#[test]
+fn every_exclusive_teardown_closes_the_sink_first() {
+    let body = without_comments(&audio_rs_production_source());
+    assert_eq!(
+        body.matches("sink_closing.store(true").count(),
+        2,
+        "set sink_closing before each DirectAlsa set_state(Null)"
+    );
+}
+
 /// A write that fails because the writer is stopping must end the writer
 /// quietly. Reported as a device fault it pops a bogus "device disconnected"
 /// toast and sets `tearing_down` under the next track's backend.
