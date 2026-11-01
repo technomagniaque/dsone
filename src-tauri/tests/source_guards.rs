@@ -723,6 +723,22 @@ fn uridecodebin_is_built_in_one_place() {
     );
 }
 
+/// `drain_writer_rx` returns whether it swallowed a Shutdown. A caller that
+/// ignores it leaves the writer running while the worker joins it forever.
+#[test]
+fn a_flush_never_swallows_a_writer_shutdown() {
+    let body = without_comments(&audio_rs_production_source());
+    let ignored = body
+        .lines()
+        .filter(|l| l.trim().starts_with("drain_writer_rx("))
+        .count()
+        + body.matches("{ drain_writer_rx(&rx);").count();
+    assert_eq!(
+        ignored, 0,
+        "a Flush that drains a Shutdown must exit the writer, or the worker's join hangs"
+    );
+}
+
 /// With no proxy, `souphttpsrc` must win HTTP source selection over
 /// `curlhttpsrc`, which is true only while soup outranks curl in the registry.
 ///
