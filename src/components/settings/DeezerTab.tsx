@@ -151,6 +151,10 @@ export default function DeezerTab() {
                 <RefreshCw size={12} className="animate-spin" />
                 Synchronizing…
               </span>
+            ) : syncStatus.lastError ? (
+              <span className="text-red-400 break-all">
+                {syncStatus.lastError}
+              </span>
             ) : syncStatus.lastSyncedAt ? (
               <span>
                 Last synced ({syncStatus.lastSource ?? "Deezer"}):{" "}

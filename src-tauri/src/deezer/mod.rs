@@ -157,7 +157,7 @@ impl SongSource {
             id: models::num(v, "SNG_ID")?,
             token: models::text(v, "TRACK_TOKEN"),
             token_expire: models::num(v, "TRACK_TOKEN_EXPIRE"),
-            gain: models::float(v, "GAIN"),
+            gain: models::float(v, "GAIN").filter(|g| g.is_finite() && (-30.0..=15.0).contains(g)),
             raw: v.clone(),
             fallback: v
                 .get("FALLBACK")
@@ -767,11 +767,19 @@ impl DeezerClient {
             .collect())
     }
 
-    pub async fn flow(&self) -> Result<Vec<DzTrack>, SoneError> {
+    /// User's Flow mix, optionally filtered by a Deezer Flow mood or genre
+    /// `config_id` (e.g. `"chill"`, `"motivation"`, `"focus"`, `"party"`,
+    /// `"melancholy"`, `"you_and_me"`, `"new_releases"`, `"genre-rock"`).
+    pub async fn flow(&self, config_id: Option<&str>) -> Result<Vec<DzTrack>, SoneError> {
         let uid = self.user_id()?;
-        let r = self
-            .gw("radio.getUserRadio", json!({ "user_id": uid.to_string() }))
-            .await?;
+        let mut params = json!({ "user_id": uid.to_string() });
+        if let Some(cid) = config_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "default")
+        {
+            params["config_id"] = json!(cid);
+        }
+        let r = self.gw("radio.getUserRadio", params).await?;
         // Seen both as {data: [...]} and as a bare array.
         let list = r.get("data").cloned().unwrap_or(r);
         Ok(models::gw_tracks(&list))
@@ -939,11 +947,11 @@ impl DeezerClient {
 
     // ---- cloud queue sync & play reporting (Android <-> dsone) -------------
 
-    async fn pipe_jwt(&self) -> Result<String, SoneError> {
+    async fn pipe_jwt(&self) -> Result<queue_sync::PipeJwt, SoneError> {
         {
             let guard = self.pipe_jwt.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(cached) = guard.as_ref().filter(|j| j.is_fresh()) {
-                return Ok(cached.token.clone());
+                return Ok(cached.clone());
             }
         }
         let arl = self
@@ -952,9 +960,8 @@ impl DeezerClient {
             .map(|s| s.arl.clone())
             .ok_or(SoneError::NotAuthenticated)?;
         let jwt = queue_sync::fetch_pipe_jwt(&self.http, &arl).await?;
-        let token = jwt.token.clone();
-        *self.pipe_jwt.lock().unwrap_or_else(|p| p.into_inner()) = Some(jwt);
-        Ok(token)
+        *self.pipe_jwt.lock().unwrap_or_else(|p| p.into_inner()) = Some(jwt.clone());
+        Ok(jwt)
     }
 
     fn invalidate_pipe_jwt(&self) {
@@ -967,11 +974,11 @@ impl DeezerClient {
         &self,
     ) -> Result<Option<queue_sync::DzCloudQueueState>, SoneError> {
         let mut jwt = self.pipe_jwt().await?;
-        let raw = match queue_sync::pull_raw_queue(&self.http, &jwt).await {
+        let raw = match queue_sync::pull_raw_queue(&self.http, &jwt.token).await {
             Err(SoneError::NotAuthenticated) => {
                 self.invalidate_pipe_jwt();
                 jwt = self.pipe_jwt().await?;
-                queue_sync::pull_raw_queue(&self.http, &jwt).await?
+                queue_sync::pull_raw_queue(&self.http, &jwt.token).await?
             }
             other => other?,
         };

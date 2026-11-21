@@ -63,15 +63,29 @@ export default function FlowDiagramBody({
     losslessPromotion,
   } = deriveAlterations(sp);
 
+  const decodedBits = sp?.decodedFormat?.startsWith("S24")
+    ? 24
+    : sp?.decodedFormat?.startsWith("S32")
+      ? 32
+      : sp?.decodedFormat?.startsWith("S16")
+        ? 16
+        : null;
   const sourceCodec = streamInfo?.codec?.toUpperCase() ?? null;
-  const sourceBits = streamInfo?.bitDepth ?? null;
-  const sourceRate = streamInfo?.sampleRate ?? null;
-  const sourceQuality =
-    streamInfo?.audioQuality || currentTrack?.audioQuality || null;
   const sourceName =
     (currentTrack as { provider?: string } | null)?.provider === "deezer"
       ? "DEEZER"
       : "TIDAL";
+  const isDeezerFlac = sourceName === "DEEZER" && sourceCodec === "FLAC";
+  const sourceBits = isDeezerFlac
+    ? (decodedBits ?? streamInfo?.bitDepth ?? null)
+    : (streamInfo?.bitDepth ?? decodedBits);
+  const sourceRate = isDeezerFlac
+    ? (sp?.decodedRate ?? streamInfo?.sampleRate ?? null)
+    : (streamInfo?.sampleRate ?? sp?.decodedRate ?? null);
+  const sourceQuality =
+    isDeezerFlac && ((sourceBits ?? 0) > 16 || (sourceRate ?? 0) > 48_000)
+      ? "HI_RES_LOSSLESS"
+      : streamInfo?.audioQuality || currentTrack?.audioQuality || null;
   // MP3 / AAC sources are lossy before the first sample is decoded.
   const lossySource =
     !!sourceCodec && ["MP3", "AAC", "MP4A", "HE-AAC"].includes(sourceCodec);

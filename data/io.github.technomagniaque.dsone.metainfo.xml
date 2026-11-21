@@ -127,7 +127,7 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="0.26.0" date="2026-11-21">
+    <release version="0.27.0" date="2026-11-21">
       <description>
         <p>Deezer Hi-Fi / Hi-Res Lossless up to 24-bit / 192 kHz (FLAC STREAMINFO detection and live Signal Path sync), track radio and suggested tracks, artist radio, full Deezer playlist management (edit, delete, remove tracks, filter), library tabs (Playlists, Albums, Artists), and Deezer Charts.</p>
       </description>

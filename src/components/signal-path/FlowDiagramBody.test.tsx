@@ -395,4 +395,19 @@ describe("FlowDiagramBody source and fallback (dsone)", () => {
     );
     expect(text).toContain("EXCLUSIVE FALLBACK");
   });
+
+  it("displays DEEZER with 24/192 resolution from decoded caps when streamInfo omits bitDepth/sampleRate", () => {
+    const text = renderWith(
+      normalSp({
+        decodedFormat: "S24_32LE",
+        decodedRate: 192000,
+        outputFormat: "S32LE",
+        outputRate: 192000,
+      }),
+      "FLAC",
+      "deezer",
+    );
+    expect(text).toContain("DEEZER");
+    expect(text).toContain("FLAC 24/192");
+  });
 });

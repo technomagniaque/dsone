@@ -280,9 +280,12 @@ pub async fn deezer_get_charts(
     state.deezer.charts(limit).await
 }
 
-#[tauri::command]
-pub async fn deezer_get_flow(state: State<'_, AppState>) -> Result<Vec<DzTrack>, SoneError> {
-    state.deezer.flow().await
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_get_flow(
+    state: State<'_, AppState>,
+    config_id: Option<String>,
+) -> Result<Vec<DzTrack>, SoneError> {
+    state.deezer.flow(config_id.as_deref()).await
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -411,11 +414,16 @@ async fn resolve_deezer(
     }
     let uri = state.deezer.loopback_url(track_id, resolved.format).await?;
     let info = stream_info(&resolved, &uri);
-    let norm_gain = if state.volume_normalization.load(Ordering::Relaxed) {
+    let bit_perfect = state.bit_perfect.load(Ordering::Relaxed);
+    let norm_gain = if state.volume_normalization.load(Ordering::Relaxed) && !bit_perfect {
         compute_norm_gain(resolved.gain, None)
     } else {
         1.0
     };
+    log::debug!(
+        "[deezer] track {track_id}: gain={:?} dB, bit_perfect={bit_perfect}, norm_gain={norm_gain:.3}",
+        resolved.gain
+    );
     Ok((info, uri, norm_gain, resolved.gain.unwrap_or(f64::NAN)))
 }
 

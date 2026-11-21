@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useAtom, useAtomValue, useStore } from "jotai";
+import { invoke } from "@tauri-apps/api/core";
 import {
   deezerCloudQueueSyncAtom,
   deezerQueueSyncStatusAtom,
@@ -82,6 +83,12 @@ export function applyDeezerCloudQueue(
   const active = stamped[pos];
   const after = stamped.slice(pos + 1);
 
+  const prevTrack = store.get(currentTrackAtom);
+  if (!store.get(isPlayingAtom) && prevTrack && prevTrack.id !== active.id) {
+    // Reset any paused GStreamer pipeline so pressing Play loads the newly
+    // synced phone track instead of resuming the previous local track.
+    invoke("stop_track").catch(() => {});
+  }
   store.set(historyAtom, before);
   store.set(currentTrackAtom, active);
   store.set(queueAtom, after);
@@ -105,6 +112,7 @@ export function applyDeezerCloudQueue(
     lastSyncedAt: Date.now(),
     syncing: false,
     lastSource: cloud.sourceUserAgent ?? "Deezer",
+    lastError: null,
   });
   return active;
 }
@@ -153,8 +161,9 @@ export function useDeezerQueueSyncActions() {
         }
         return false;
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         console.warn("[deezer-sync] pull failed:", err);
-        setStatus((prev) => ({ ...prev, syncing: false }));
+        setStatus((prev) => ({ ...prev, syncing: false, lastError: msg }));
         if (!opts?.silent) {
           showToast("Couldn't sync queue from Deezer", "error");
         }
@@ -198,14 +207,16 @@ export function useDeezerQueueSyncActions() {
           lastSyncedAt: Date.now(),
           syncing: false,
           lastSource: "dsone",
+          lastError: null,
         });
         if (!opts?.silent) {
           showToast("Queue synced to Deezer devices");
         }
         return true;
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         console.warn("[deezer-sync] push failed:", err);
-        setStatus((prev) => ({ ...prev, syncing: false }));
+        setStatus((prev) => ({ ...prev, syncing: false, lastError: msg }));
         if (!opts?.silent) {
           showToast("Couldn't push queue to Deezer", "error");
         }
@@ -236,12 +247,13 @@ export function useDeezerQueueSync() {
   const initialPulledUserRef = useRef<number | null>(null);
 
   const checkCloudForUpdates = useCallback(
-    async (reason: "startup" | "focus") => {
+    async (reason: "startup" | "focus" | "poll") => {
       if (!user || !enabled) return;
       // Never hijack an actively playing session in dsone.
       if (store.get(isPlayingAtom)) return;
       const now = Date.now();
-      if (reason === "focus" && now - lastPullCheckRef.current < 15_000) return;
+      if (reason === "focus" && now - lastPullCheckRef.current < 4_000) return;
+      if (reason === "poll" && now - lastPullCheckRef.current < 11_000) return;
       lastPullCheckRef.current = now;
 
       try {
@@ -281,14 +293,23 @@ export function useDeezerQueueSync() {
     return () => window.clearTimeout(timer);
   }, [user, enabled, checkCloudForUpdates]);
 
-  // Also check when returning to the dsone window while paused.
+  // Also check when returning to the dsone window or periodically while paused
+  // and visible so Android playback appears automatically within seconds.
   useEffect(() => {
     if (!user || !enabled) return;
     const onFocus = () => {
       void checkCloudForUpdates("focus");
     };
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void checkCloudForUpdates("poll");
+      }
+    }, 12_000);
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(interval);
+    };
   }, [user, enabled, checkCloudForUpdates]);
 
   // Debounced push whenever the user changes Deezer track / queue / repeat / shuffle.

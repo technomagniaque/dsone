@@ -125,10 +125,19 @@ export async function deezerFavoritesPlayable(): Promise<PlayableSource> {
   };
 }
 
-export async function deezerFlowPlayable(): Promise<PlayableSource> {
+export async function deezerFlowPlayable(
+  configId?: string,
+  label?: string,
+): Promise<PlayableSource> {
+  const effectiveId = configId && configId !== "default" ? configId : undefined;
+  const name = effectiveId ? `Flow · ${label || effectiveId}` : "Flow";
   return {
-    meta: { type: "deezer-flow", id: "deezer-flow", name: "Flow" },
-    loaded: await deezerGetFlow(),
+    meta: {
+      type: "deezer-flow",
+      id: effectiveId ? `deezer-flow-${effectiveId}` : "deezer-flow",
+      name,
+    },
+    loaded: await deezerGetFlow(effectiveId),
   };
 }
 

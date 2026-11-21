@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
-import { ArrowRight, SlidersHorizontal, X } from "lucide-react";
+import { ArrowRight, Check, SlidersHorizontal, X } from "lucide-react";
 import { OPEN_SETTINGS_EVENT } from "./ProxyNoticeBanner";
 import {
   signalPathAtom,
@@ -23,6 +23,7 @@ import {
   gainFactorToDb,
 } from "./signal-path/types";
 import { useSignalPathRefresh } from "../hooks/useSignalPathRefresh";
+import { useAudioOutputProfiles } from "../hooks/useAudioOutputProfiles";
 import { useEscapeDismiss } from "../hooks/useEscapeDismiss";
 import { DISMISS_PRIORITY } from "../lib/dismissStack";
 
@@ -40,6 +41,8 @@ export default function SignalPathPanel({
   const sp = useAtomValue(signalPathAtom);
   const streamInfo = useAtomValue(streamInfoAtom);
   const currentTrack = useAtomValue(currentTrackAtom);
+  const { profiles, activeProfileId, switchingId, applyProfile } =
+    useAudioOutputProfiles();
 
   useSignalPathRefresh(open);
 
@@ -75,9 +78,28 @@ export default function SignalPathPanel({
     losslessPromotion,
   } = deriveAlterations(sp);
 
-  const sourceBits = streamInfo?.bitDepth;
-  const sourceRate = streamInfo?.sampleRate;
+  const decodedBits = sp?.decodedFormat?.startsWith("S24")
+    ? 24
+    : sp?.decodedFormat?.startsWith("S32")
+      ? 32
+      : sp?.decodedFormat?.startsWith("S16")
+        ? 16
+        : null;
   const sourceCodec = streamInfo?.codec;
+  const sourceProvider =
+    currentTrack?.provider === "deezer"
+      ? "DEEZER"
+      : currentTrack
+        ? "TIDAL"
+        : null;
+  const isDeezerFlac =
+    sourceProvider === "DEEZER" && sourceCodec?.toUpperCase() === "FLAC";
+  const sourceBits = isDeezerFlac
+    ? (decodedBits ?? streamInfo?.bitDepth ?? null)
+    : (streamInfo?.bitDepth ?? decodedBits);
+  const sourceRate = isDeezerFlac
+    ? (sp?.decodedRate ?? streamInfo?.sampleRate ?? null)
+    : (streamInfo?.sampleRate ?? sp?.decodedRate ?? null);
   const sourceSummary = [
     sourceCodec?.toUpperCase(),
     sourceBits && sourceRate
@@ -86,6 +108,11 @@ export default function SignalPathPanel({
   ]
     .filter(Boolean)
     .join(" ");
+  const trackRgDb =
+    typeof streamInfo?.trackReplayGain === "number" &&
+    Number.isFinite(streamInfo.trackReplayGain)
+      ? streamInfo.trackReplayGain
+      : null;
 
   let headline: string;
   if (!sp || !sp.backend) {
@@ -198,10 +225,18 @@ export default function SignalPathPanel({
 
                   {/* Source quality + DAC name — gives the compact view enough
                     factual context to be useful without expanding. */}
-                  {(sourceSummary || dacDisplayName(sp)) && (
+                  {(sourceSummary || sourceProvider || dacDisplayName(sp)) && (
                     <div className="flex flex-col items-center gap-0.5 mb-4 max-w-[360px]">
-                      {sourceSummary && (
+                      {(sourceProvider || sourceSummary) && (
                         <div className="text-[11px] font-mono text-th-text-muted">
+                          {sourceProvider && (
+                            <span className="text-th-accent font-semibold">
+                              {sourceProvider}
+                            </span>
+                          )}
+                          {sourceProvider && sourceSummary && (
+                            <span className="text-th-text-faint/40"> · </span>
+                          )}
                           {sourceSummary}
                           {streamInfo?.audioQuality && (
                             <>
@@ -211,6 +246,17 @@ export default function SignalPathPanel({
                               </span>
                             </>
                           )}
+                        </div>
+                      )}
+                      {trackRgDb !== null && (
+                        <div className="text-[10.5px] font-mono text-th-text-faint">
+                          ReplayGain {trackRgDb >= 0 ? "+" : ""}
+                          {trackRgDb.toFixed(1)} dB
+                          {sp?.bitPerfect
+                            ? " · bypassed (Bit-Perfect)"
+                            : normAltered
+                              ? ` · applied (${gainFactorToDb(normFactor)})`
+                              : " · off"}
                         </div>
                       )}
                       {dacDisplayName(sp) && (
@@ -253,6 +299,35 @@ export default function SignalPathPanel({
                           <span>{sp.backend}</span>
                         </>
                       )}
+                    </div>
+                  )}
+
+                  {profiles.length > 0 && (
+                    <div className="w-full max-w-[380px] mb-5">
+                      <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-th-text-faint mb-1.5">
+                        1-Click Output Profile
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-1.5">
+                        {profiles.map((p) => {
+                          const active = p.id === activeProfileId;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              disabled={switchingId === p.id}
+                              onClick={() => void applyProfile(p)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium border transition-colors disabled:opacity-50 ${
+                                active
+                                  ? "bg-th-accent/15 border-th-accent/50 text-th-accent"
+                                  : "bg-th-surface/60 border-th-border-subtle text-th-text-secondary hover:text-th-text-primary hover:bg-th-button-hover"
+                              }`}
+                            >
+                              {active && <Check size={11} />}
+                              <span>{p.name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 

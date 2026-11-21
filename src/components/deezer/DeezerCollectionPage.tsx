@@ -33,6 +33,7 @@ interface DeezerCollectionPageProps {
   isUserPlaylist?: boolean;
   onTrackRemoved?: (index: number) => void;
   headerActions?: ReactNode;
+  topSlot?: ReactNode;
 }
 
 /** Header + track list shared by Deezer playlists, Loved Tracks and Flow.
@@ -55,6 +56,7 @@ export default function DeezerCollectionPage({
   isUserPlaylist,
   onTrackRemoved,
   headerActions,
+  topSlot,
 }: DeezerCollectionPageProps) {
   const playSource = usePlaySource();
   const { showToast } = useToast();
@@ -214,6 +216,7 @@ export default function DeezerCollectionPage({
 
       <PageContainer>
         <div className="px-8 pt-4 pb-8">
+          {topSlot}
           {tracks.length === 0 ? (
             <p className="text-th-text-muted text-sm py-8 text-center">
               Nothing here yet

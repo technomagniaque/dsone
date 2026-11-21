@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Play, Plus, RefreshCw, Smartphone, User } from "lucide-react";
 import {
+  deezerFlowMoodAtom,
   deezerPlaylistsVersionAtom,
   deezerQueueSyncStatusAtom,
   deezerUserAtom,
 } from "../../atoms/deezer";
+import { DEEZER_FLOW_MOODS } from "../../lib/deezerFlowMoods";
 import {
   deezerGetCharts,
   deezerGetHistory,
@@ -53,6 +55,7 @@ export default function DeezerHome() {
   const playlistsVersion = useAtomValue(deezerPlaylistsVersionAtom);
   const syncStatus = useAtomValue(deezerQueueSyncStatusAtom);
   const bumpPlaylists = useSetAtom(deezerPlaylistsVersionAtom);
+  const setFlowMood = useSetAtom(deezerFlowMoodAtom);
   const { navigateTo, navigateToPlaylist, navigateToAlbum, navigateToArtist } =
     useNavigation();
   const playSource = usePlaySource();
@@ -163,7 +166,7 @@ export default function DeezerHome() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           {tiles.map((t) => (
             <div
               key={t.kind}
@@ -198,6 +201,53 @@ export default function DeezerHome() {
             </div>
           ))}
         </div>
+
+        {/* Flow Moods quick picker */}
+        <section className="mb-10">
+          <div className="flex items-center justify-between mb-2.5">
+            <h2 className="text-[15px] font-bold text-th-text-secondary uppercase tracking-wider">
+              Flow Moods
+            </h2>
+            <button
+              type="button"
+              onClick={() => navigateTo({ type: "deezerFlow" })}
+              className="text-xs font-semibold text-th-text-muted hover:text-th-text-primary transition-colors"
+            >
+              All moods &amp; genres
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {DEEZER_FLOW_MOODS.filter(
+              (m) => m.category === "mood" && m.id !== "default",
+            ).map((mood) => (
+              <div
+                key={mood.id}
+                onClick={() => {
+                  setFlowMood(mood.id);
+                  navigateTo({ type: "deezerFlow" });
+                }}
+                className={`group flex items-center gap-2 pl-3.5 pr-2 py-1.5 rounded-full bg-gradient-to-r ${mood.gradient} text-white text-[12.5px] font-bold cursor-pointer shadow-sm hover:brightness-110 transition-all`}
+                title={mood.subtitle}
+              >
+                <span>{mood.label}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFlowMood(mood.id);
+                    playCollection(() =>
+                      deezerFlowPlayable(mood.id, mood.label),
+                    );
+                  }}
+                  aria-label={`Play Flow ${mood.label}`}
+                  className="w-6 h-6 rounded-full bg-black/25 hover:bg-black/45 flex items-center justify-center transition-colors"
+                >
+                  <Play size={11} fill="currentColor" className="ml-0.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
 
         {historyTracks.length > 0 && (
           <section className="mb-10">

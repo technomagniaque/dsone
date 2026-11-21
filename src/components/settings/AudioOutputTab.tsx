@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useAtom, useAtomValue } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
+import { Check, Plus, Save, Trash2 } from "lucide-react";
 import {
   bitPerfectAtom,
   exclusiveDeviceAtom,
@@ -8,6 +9,7 @@ import {
   signalPathAtom,
 } from "../../atoms/playback";
 import { usePlaybackActions } from "../../hooks/usePlaybackActions";
+import { useAudioOutputProfiles } from "../../hooks/useAudioOutputProfiles";
 import {
   BUFFER_PRESETS,
   DEFAULT_AUDIO_OUTPUT,
@@ -75,6 +77,16 @@ export default function AudioOutputTab() {
   const [devices, setDevices] = useState<{ id: string; name: string }[]>([]);
   const [sinks, setSinks] = useState<PipewireSink[]>([]);
   const [retrying, setRetrying] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
+  const {
+    profiles,
+    activeProfileId,
+    switchingId,
+    applyProfile,
+    saveCurrentAsProfile,
+    updateProfileWithCurrent,
+    deleteProfile,
+  } = useAudioOutputProfiles(cfg);
 
   useEffect(() => {
     loadAudioOutputConfig()
@@ -143,6 +155,89 @@ export default function AudioOutputTab() {
           </button>
         </div>
       )}
+
+      <SectionLabel>Output profiles (1-click)</SectionLabel>
+      <div className={`${GROUP_CLASS} mb-5`} style={GROUP_STYLE}>
+        <div className="px-4 py-3 flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
+            {profiles.map((p) => {
+              const active = p.id === activeProfileId;
+              return (
+                <div
+                  key={p.id}
+                  className={`inline-flex items-center rounded-full border text-[12px] transition-colors ${
+                    active
+                      ? "bg-th-accent/15 border-th-accent/50 text-th-accent"
+                      : "bg-th-inset/60 border-th-border-subtle text-th-text-primary"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    disabled={switchingId === p.id}
+                    onClick={() => void applyProfile(p, setCfg)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold disabled:opacity-50"
+                    title={
+                      p.exclusiveMode
+                        ? `ALSA exclusive${p.bitPerfect ? " · Bit-Perfect" : ""}${p.exclusiveDevice ? ` · ${p.exclusiveDevice}` : ""}`
+                        : `PipeWire${p.config.pipewireTarget ? ` · ${p.config.pipewireTarget}` : " · system default"}`
+                    }
+                  >
+                    {active && <Check size={12} />}
+                    <span>{p.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateProfileWithCurrent(p, cfg)}
+                    className="px-1.5 py-1.5 text-th-text-muted hover:text-th-text-primary transition-colors"
+                    title={`Overwrite "${p.name}" with current output & PipeWire settings`}
+                    aria-label={`Update ${p.name}`}
+                  >
+                    <Save size={12} />
+                  </button>
+                  {!p.builtin && (
+                    <button
+                      type="button"
+                      onClick={() => deleteProfile(p.id)}
+                      className="pr-2.5 pl-1 py-1.5 text-th-text-muted hover:text-red-400 transition-colors"
+                      title={`Delete "${p.name}"`}
+                      aria-label={`Delete ${p.name}`}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={newProfileName}
+              onChange={(e) => setNewProfileName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newProfileName.trim()) {
+                  saveCurrentAsProfile(newProfileName, cfg);
+                  setNewProfileName("");
+                }
+              }}
+              placeholder="Save current ALSA / PipeWire setup as…"
+              className="flex-1 bg-th-inset border border-th-border-subtle rounded-md px-2.5 py-1.5 text-[12px] text-th-text-primary placeholder:text-th-text-faint focus:outline-none focus:border-th-accent"
+            />
+            <button
+              type="button"
+              disabled={!newProfileName.trim()}
+              onClick={() => {
+                saveCurrentAsProfile(newProfileName, cfg);
+                setNewProfileName("");
+              }}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-th-elevated hover:bg-th-surface-hover border border-th-border-subtle text-[12px] font-semibold text-th-text-primary disabled:opacity-40 transition-colors"
+            >
+              <Plus size={13} />
+              Save profile
+            </button>
+          </div>
+        </div>
+      </div>
 
       <SectionLabel>Exclusive output</SectionLabel>
       <div className={GROUP_CLASS} style={GROUP_STYLE}>

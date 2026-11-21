@@ -18,7 +18,8 @@ use crate::deezer::api::Http;
 use crate::deezer::models::DzTrack;
 use crate::SoneError;
 
-pub const AUTH_ARL_URL: &str = "https://auth.deezer.com/login/arl?jo=p&rto=c&i=c";
+pub const AUTH_ARL_PAYLOAD_URL: &str = "https://auth.deezer.com/login/arl?jo=p&rto=c&i=p";
+pub const AUTH_ARL_COOKIE_URL: &str = "https://auth.deezer.com/login/arl?jo=p&rto=c&i=c";
 pub const PIPE_URL: &str = "https://pipe.deezer.com/api";
 const DEEZER_ORIGIN: &str = "https://www.deezer.com";
 const MAX_SYNC_TRACKS: usize = 500;
@@ -98,7 +99,7 @@ const MUTATION_PUSH_QUEUE: &str = r#"mutation KmpQsPushQueueState(
   }) {
     __typename
     ... on PushQueueStateOutput { version updatedAt }
-    ... on PatchQueueStateError {
+    ... on PushQueueStateError {
       isBadRequest
       conflict { __typename current { __typename ...QueueStateFragment } }
     }
@@ -124,13 +125,19 @@ fragment QueueStateFragment on QueueState {
 #[derive(Clone)]
 pub struct PipeJwt {
     pub token: String,
-    pub exp_secs: u64,
+    /// Approximate local Unix expiry (`exp + clock_skew_secs`), matching the
+    /// official Deezer Desktop client's `approximateClientExpire` calculation.
+    pub exp_local_secs: u64,
+    /// `local_now - jwt.iat` in seconds so timestamps sent to Deezer match
+    /// Deezer's server clock even when the local system clock is skewed.
+    pub clock_skew_secs: i64,
 }
 
 impl std::fmt::Debug for PipeJwt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PipeJwt")
-            .field("exp_secs", &self.exp_secs)
+            .field("exp_local_secs", &self.exp_local_secs)
+            .field("clock_skew_secs", &self.clock_skew_secs)
             .field("token", &"<redacted>")
             .finish()
     }
@@ -138,7 +145,13 @@ impl std::fmt::Debug for PipeJwt {
 
 impl PipeJwt {
     pub fn is_fresh(&self) -> bool {
-        crate::now_secs() + 60 < self.exp_secs
+        crate::now_secs() + 60 < self.exp_local_secs
+    }
+
+    /// Current Unix timestamp adjusted to Deezer's server clock.
+    pub fn server_now_secs(&self) -> u64 {
+        let local = crate::now_secs() as i64;
+        (local - self.clock_skew_secs).max(0) as u64
     }
 }
 
@@ -197,33 +210,88 @@ pub struct ParsedCloudQueue {
     pub extra_chunk_ids: Vec<String>,
 }
 
-/// Decode the `exp` Unix timestamp from a JWT payload without verifying signatures.
-pub fn parse_jwt_exp(jwt: &str) -> Option<u64> {
+/// Decode `(iat, exp)` Unix timestamps from a JWT payload without verifying signatures.
+pub fn parse_jwt_claims(jwt: &str) -> Option<(Option<u64>, Option<u64>)> {
     let payload_b64 = jwt.split('.').nth(1)?;
     let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload_b64)
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload_b64))
         .ok()?;
     let v: Value = serde_json::from_slice(&decoded).ok()?;
-    v.get("exp").and_then(Value::as_u64)
+    let iat = v.get("iat").and_then(Value::as_u64);
+    let exp = v.get("exp").and_then(Value::as_u64);
+    Some((iat, exp))
 }
 
-/// Exchange the user's `arl` cookie for a Pipe API JWT.
+/// Decode the `exp` Unix timestamp from a JWT payload without verifying signatures.
+#[cfg(test)]
+pub fn parse_jwt_exp(jwt: &str) -> Option<u64> {
+    parse_jwt_claims(jwt)?.1
+}
+
+fn build_pipe_jwt(token: String, local_now: u64) -> PipeJwt {
+    let (iat, exp) = parse_jwt_claims(&token).unwrap_or((None, None));
+    let clock_skew_secs = iat.map(|t| (local_now as i64) - (t as i64)).unwrap_or(0);
+    let exp_local_secs = match exp {
+        Some(e) => ((e as i64) + clock_skew_secs).max(0) as u64,
+        None => local_now + 10 * 60,
+    };
+    PipeJwt {
+        token,
+        exp_local_secs,
+        clock_skew_secs,
+    }
+}
+
+/// Exchange the user's `arl` for a Pipe API JWT.
+///
+/// Uses the payload endpoint (`?jo=p&rto=c&i=p` with JSON `{"arl": ...}`) first
+/// — matching official Deezer Desktop `refreshArlLogin` — because Akamai
+/// returns `411 Length Required` on bodyless cookie-only POST requests. Falls
+/// back to cookie mode (`?jo=p&rto=c&i=c`) with an explicit empty body if needed.
 pub async fn fetch_pipe_jwt(http: &Http, arl: &str) -> Result<PipeJwt, SoneError> {
-    let cookie = format!("arl={arl}");
+    let payload = json!({ "arl": arl });
     let resp = http
         .send(|c| {
-            c.post(AUTH_ARL_URL)
+            c.post(AUTH_ARL_PAYLOAD_URL)
+                .header(ORIGIN, DEEZER_ORIGIN)
+                .header(ACCEPT, "application/json")
+                .header(CONTENT_TYPE, "application/json")
+                .json(&payload)
+        })
+        .await?;
+
+    let resp = if resp.status().is_success() {
+        resp
+    } else {
+        let first_status = resp.status();
+        log::warn!(
+            "[deezer-sync] auth/login/arl payload mode returned {first_status}, trying cookie fallback"
+        );
+        let cookie = format!("arl={arl}");
+        http.send(|c| {
+            c.post(AUTH_ARL_COOKIE_URL)
                 .header(COOKIE, &cookie)
                 .header(ORIGIN, DEEZER_ORIGIN)
                 .header(ACCEPT, "application/json")
+                .body("")
         })
-        .await?;
+        .await?
+    };
+
     let status = resp.status();
     if !status.is_success() {
+        let err_snippet: String = resp
+            .text()
+            .await
+            .unwrap_or_default()
+            .chars()
+            .take(180)
+            .collect();
+        log::warn!("[deezer-sync] auth/login/arl failed ({status}): {err_snippet}");
         return Err(SoneError::Api {
             status: status.as_u16(),
-            body: format!("deezer auth/login/arl failed ({status})"),
+            body: format!("deezer auth/login/arl failed ({status}): {err_snippet}"),
         });
     }
     let body: Value = resp
@@ -236,8 +304,12 @@ pub async fn fetch_pipe_jwt(http: &Http, arl: &str) -> Result<PipeJwt, SoneError
         .filter(|s| !s.is_empty())
         .ok_or_else(|| SoneError::Parse("deezer auth/login/arl: missing jwt".into()))?
         .to_string();
-    let exp_secs = parse_jwt_exp(&token).unwrap_or_else(|| crate::now_secs() + 10 * 60);
-    Ok(PipeJwt { token, exp_secs })
+    let jwt = build_pipe_jwt(token, crate::now_secs());
+    log::info!(
+        "[deezer-sync] obtained Pipe JWT (clock_skew={}s)",
+        jwt.clock_skew_secs
+    );
+    Ok(jwt)
 }
 
 /// Execute one GraphQL operation on `https://pipe.deezer.com/api`.
@@ -260,6 +332,7 @@ pub async fn pipe_graphql(
                 .header(AUTHORIZATION, &auth)
                 .header(CONTENT_TYPE, "application/json")
                 .header(ACCEPT, "application/json")
+                .header("Accept-Language", "en")
                 .header(ORIGIN, DEEZER_ORIGIN)
                 .json(&payload)
         })
@@ -269,7 +342,14 @@ pub async fn pipe_graphql(
         return Err(SoneError::NotAuthenticated);
     }
     if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
+        let text: String = resp
+            .text()
+            .await
+            .unwrap_or_default()
+            .chars()
+            .take(300)
+            .collect();
+        log::warn!("[deezer-sync] pipe {operation_name} HTTP {status}: {text}");
         return Err(SoneError::Api {
             status: status.as_u16(),
             body: format!("deezer pipe {operation_name}: {text}"),
@@ -286,11 +366,24 @@ pub async fn pipe_graphql(
                 .filter_map(|e| e.get("message").and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join("; ");
+            let err_types = errs
+                .iter()
+                .filter_map(|e| {
+                    e.get("type")
+                        .and_then(Value::as_str)
+                        .or_else(|| e.pointer("/extensions/type").and_then(Value::as_str))
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             if msg.to_ascii_lowercase().contains("unauth")
                 || msg.to_ascii_lowercase().contains("jwt")
+                || err_types.contains("JwtToken")
             {
                 return Err(SoneError::NotAuthenticated);
             }
+            log::warn!(
+                "[deezer-sync] pipe {operation_name} GraphQL error ({err_types}): {msg}"
+            );
             return Err(SoneError::Api {
                 status: 400,
                 body: format!("deezer pipe {operation_name}: {msg}"),
@@ -438,7 +531,7 @@ pub async fn pull_raw_queue(
     // the remaining chunks in order so large playlists/queues resume accurately.
     if !parsed.extra_chunk_ids.is_empty() && parsed.track_ids.len() < MAX_SYNC_TRACKS {
         if let Some(queue_id) = parsed.queue_id.clone() {
-            let chunk_ids: Vec<String> = parsed.extra_chunk_ids.iter().take(5).cloned().collect();
+            let chunk_ids: Vec<String> = parsed.extra_chunk_ids.iter().take(10).cloned().collect();
             if let Ok(chunks_data) = pipe_graphql(
                 http,
                 jwt,
@@ -456,7 +549,6 @@ pub async fn pull_raw_queue(
                         .pointer("/me/lastKnownQueueState/position")
                         .and_then(Value::as_u64)
                         .unwrap_or(0) as usize;
-                    // Reassemble in chunkMetadataList order when possible.
                     let all_chunk_ids: Vec<String> = data
                         .pointer("/me/lastKnownQueueState/queue/queueMetadata/chunkMetadataList")
                         .and_then(Value::as_array)
@@ -486,16 +578,25 @@ pub async fn pull_raw_queue(
                             }
                             all_ids.extend(ids);
                             raw_offset += count;
-                            if all_ids.len() >= MAX_SYNC_TRACKS {
+                            if found_pos.is_some() && all_ids.len() >= MAX_SYNC_TRACKS {
                                 break;
                             }
                         }
                     }
                     if !all_ids.is_empty() {
-                        parsed.track_ids = all_ids;
-                        parsed.position = found_pos
+                        let pos = found_pos
                             .unwrap_or(parsed.position)
-                            .min(parsed.track_ids.len().saturating_sub(1));
+                            .min(all_ids.len().saturating_sub(1));
+                        // Window around `pos` if larger than MAX_SYNC_TRACKS so the active track is preserved.
+                        if all_ids.len() > MAX_SYNC_TRACKS {
+                            let half = MAX_SYNC_TRACKS / 2;
+                            let start = pos.saturating_sub(half).min(all_ids.len() - MAX_SYNC_TRACKS);
+                            parsed.track_ids = all_ids[start..start + MAX_SYNC_TRACKS].to_vec();
+                            parsed.position = pos - start;
+                        } else {
+                            parsed.track_ids = all_ids;
+                            parsed.position = pos;
+                        }
                     }
                 }
             }
@@ -507,6 +608,13 @@ pub async fn pull_raw_queue(
         parsed.position = parsed.track_ids.len() - 1;
     }
 
+    log::info!(
+        "[deezer-sync] pulled queue version={} tracks={} pos={} source={:?}",
+        parsed.version,
+        parsed.track_ids.len(),
+        parsed.position,
+        parsed.source_user_agent
+    );
     Ok(Some(parsed))
 }
 
@@ -533,6 +641,20 @@ pub fn format_iso8601_utc(secs: u64) -> String {
     format!("{year:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}.000Z")
 }
 
+/// Map dsone's internal playback source type to an official Deezer `ctxT`
+/// value recognized by Deezer Android, iOS and Web clients.
+pub fn map_deezer_context_type(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some("deezer-album") | Some("album") | Some("album_page") => "album_page",
+        Some("deezer-artist") | Some("artist") | Some("artist_page") => "artist_page",
+        Some("deezer-flow") | Some("flow") => "flow",
+        Some("deezer-favorites") | Some("favorites") | Some("loved") => "loved",
+        Some("deezer-history") | Some("history_page") => "history_page",
+        Some("deezer-track-radio") | Some("radio_page") => "radio_page",
+        _ => "playlist_page",
+    }
+}
+
 /// Build the GraphQL variables object for `KmpQsPushQueueState`.
 pub fn build_push_variables(
     input: &DzPushQueueInput,
@@ -543,13 +665,9 @@ pub fn build_push_variables(
     let ctx_id = input
         .context_id
         .as_deref()
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
         .unwrap_or("0");
-    let ctx_type = input
-        .context_type
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("playlist_page");
+    let ctx_type = map_deezer_context_type(input.context_type.as_deref());
 
     let queue_config = json!({
         "allowEdit": true,
@@ -636,7 +754,7 @@ pub fn build_push_variables(
 /// `version`.
 pub async fn push_queue_state(
     http: &Http,
-    jwt: &str,
+    jwt: &PipeJwt,
     input: &DzPushQueueInput,
 ) -> Result<DzPushQueueResult, SoneError> {
     if input.track_ids.is_empty() {
@@ -650,14 +768,14 @@ pub async fn push_queue_state(
         .clone()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let now_iso = format_iso8601_utc(crate::now_secs());
+    let now_iso = format_iso8601_utc(jwt.server_now_secs());
 
     let mut attempt_input = input.clone();
     for attempt in 0..2 {
         let vars = build_push_variables(&attempt_input, &local_queue_id, &now_iso);
         let data = pipe_graphql(
             http,
-            jwt,
+            &jwt.token,
             "KmpQsPushQueueState",
             MUTATION_PUSH_QUEUE,
             vars,
@@ -675,6 +793,12 @@ pub async fn push_queue_state(
                 .get("updatedAt")
                 .and_then(Value::as_str)
                 .map(String::from);
+            log::info!(
+                "[deezer-sync] pushed queue version={} tracks={} pos={}",
+                version,
+                input.track_ids.len(),
+                input.position
+            );
             return Ok(DzPushQueueResult {
                 version,
                 updated_at,
@@ -687,6 +811,9 @@ pub async fn push_queue_state(
                 .pointer("/conflict/current/version")
                 .and_then(Value::as_str)
             {
+                log::info!(
+                    "[deezer-sync] push conflict, retrying with server version={conflict_ver}"
+                );
                 attempt_input.previous_version = Some(conflict_ver.to_string());
                 continue;
             }
@@ -695,6 +822,7 @@ pub async fn push_queue_state(
             .get("isBadRequest")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        log::warn!("[deezer-sync] pushQueueState rejected ({typename}): {res}");
         return Err(SoneError::Api {
             status: if bad_req { 400 } else { 409 },
             body: format!("deezer pushQueueState rejected ({typename}): {res}"),
@@ -796,5 +924,26 @@ mod tests {
             serde_json::from_str(vars["queueConfiguration"].as_str().unwrap()).unwrap();
         assert_eq!(cfg["version"], 2);
         assert_eq!(cfg["queueType"], "basic");
+        assert_eq!(cfg["ctxT"], "playlist_page");
+    }
+
+    #[test]
+    fn jwt_clock_skew_aligns_expiry_and_server_time() {
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"sub":"42","iat":1700000000,"exp":1700000900}"#);
+        let jwt_str = format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig");
+        // Simulate local clock 1000s ahead of server clock.
+        let jwt = build_pipe_jwt(jwt_str, 1_700_001_000);
+        assert_eq!(jwt.clock_skew_secs, 1000);
+        assert_eq!(jwt.exp_local_secs, 1_700_001_900);
+    }
+
+    #[test]
+    fn context_types_map_to_official_deezer_names() {
+        assert_eq!(map_deezer_context_type(Some("deezer-album")), "album_page");
+        assert_eq!(map_deezer_context_type(Some("deezer-flow")), "flow");
+        assert_eq!(map_deezer_context_type(Some("deezer-favorites")), "loved");
+        assert_eq!(map_deezer_context_type(Some("deezer-playlist")), "playlist_page");
+        assert_eq!(map_deezer_context_type(None), "playlist_page");
     }
 }

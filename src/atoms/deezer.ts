@@ -37,6 +37,7 @@ export interface DeezerQueueSyncStatus {
   lastSyncedAt: number | null;
   syncing: boolean;
   lastSource: string | null;
+  lastError?: string | null;
 }
 export const deezerQueueSyncStatusAtom = atom<DeezerQueueSyncStatus>({
   version: null,
@@ -44,7 +45,10 @@ export const deezerQueueSyncStatusAtom = atom<DeezerQueueSyncStatus>({
   lastSyncedAt: null,
   syncing: false,
   lastSource: null,
+  lastError: null,
 });
+/** Currently selected Deezer Flow mood/genre config_id ("default" = standard Flow). */
+export const deezerFlowMoodAtom = atom<string>("default");
 /** Progress of the browser sign-in (Deezer's page → deezer://autolog link). */
 export type DeezerBrowserLogin =
   | { state: "idle" }

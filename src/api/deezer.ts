@@ -193,8 +193,13 @@ export async function deezerGetCharts(limit?: number): Promise<SearchResults> {
   };
 }
 
-export const deezerGetFlow = async () =>
-  tagAll(await invoke<Track[]>("deezer_get_flow"));
+export const deezerGetFlow = async (configId?: string) =>
+  tagAll(
+    await invoke<Track[]>(
+      "deezer_get_flow",
+      configId && configId !== "default" ? { configId } : {},
+    ),
+  );
 
 export const deezerGetTrackMix = async (trackId: number) =>
   tagAll(await invoke<Track[]>("deezer_get_track_mix", { trackId }));
