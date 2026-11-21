@@ -1,3 +1,16 @@
+function resizeDeezerCdnUrl(url: string, size: number): string {
+  if (!url.includes("dzcdn.net/images/")) return url;
+  const dzSize =
+    size <= 80
+      ? "56x56"
+      : size <= 320
+        ? "250x250"
+        : size <= 640
+          ? "500x500"
+          : "1000x1000";
+  return url.replace(/\/\d+x\d+(-000000-80-0-0\.jpg)$/, `/${dzSize}$1`);
+}
+
 // Helper to convert Tidal cover UUID to image URL
 export function getTidalImageUrl(
   coverUuid: string | undefined,
@@ -5,9 +18,8 @@ export function getTidalImageUrl(
 ): string {
   if (!coverUuid) return "";
 
-  // If it's already a full URL, return it as is (or resize if supported, but usually these are static)
   if (coverUuid.startsWith("http")) {
-    return coverUuid;
+    return resizeDeezerCdnUrl(coverUuid, size);
   }
 
   // Tidal cover UUIDs need to be converted: uuid with dashes -> path with slashes
@@ -41,7 +53,7 @@ export function getTidalArtistImageUrl(
   size: number = 480,
 ): string {
   if (!uuid) return "";
-  if (uuid.startsWith("http")) return uuid;
+  if (uuid.startsWith("http")) return resizeDeezerCdnUrl(uuid, size);
   const path = uuid.replace(/-/g, "/");
   let validSize = 480;
   if (size <= 160) validSize = 160;

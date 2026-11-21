@@ -6,7 +6,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
-import { ArrowRight, X } from "lucide-react";
+import { ArrowRight, SlidersHorizontal, X } from "lucide-react";
+import { OPEN_SETTINGS_EVENT } from "./ProxyNoticeBanner";
 import {
   signalPathAtom,
   streamInfoAtom,
@@ -255,16 +256,32 @@ export default function SignalPathPanel({
                     </div>
                   )}
 
-                  <button
-                    onClick={() => setExpanded(true)}
-                    className="group flex items-center gap-2 px-4 py-2 rounded-full text-[11px] font-medium tracking-wider text-th-text-muted bg-th-surface/60 hover:bg-th-button-hover hover:text-th-text-primary transition-all border border-th-border-subtle hover:border-th-text-faint/30"
-                  >
-                    <span>SEE THE FULL PATH</span>
-                    <ArrowRight
-                      size={12}
-                      className="transition-transform group-hover:translate-x-0.5"
-                    />
-                  </button>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      onClick={() => setExpanded(true)}
+                      className="group flex items-center gap-2 px-4 py-2 rounded-full text-[11px] font-medium tracking-wider text-th-text-muted bg-th-surface/60 hover:bg-th-button-hover hover:text-th-text-primary transition-all border border-th-border-subtle hover:border-th-text-faint/30"
+                    >
+                      <span>SEE THE FULL PATH</span>
+                      <ArrowRight
+                        size={12}
+                        className="transition-transform group-hover:translate-x-0.5"
+                      />
+                    </button>
+                    <button
+                      onClick={() => {
+                        onClose();
+                        window.dispatchEvent(
+                          new CustomEvent(OPEN_SETTINGS_EVENT, {
+                            detail: "audio-output",
+                          }),
+                        );
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-full text-[11px] font-medium tracking-wider text-th-text-muted bg-th-surface/60 hover:bg-th-button-hover hover:text-th-text-primary transition-all border border-th-border-subtle hover:border-th-text-faint/30"
+                    >
+                      <SlidersHorizontal size={12} />
+                      <span>PIPEWIRE &amp; OUTPUT SETTINGS</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

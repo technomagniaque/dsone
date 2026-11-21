@@ -1,6 +1,7 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { useAtomValue } from "jotai";
 import { currentViewAtom } from "../atoms/navigation";
+import { OPEN_SETTINGS_EVENT } from "./ProxyNoticeBanner";
 import UserMenu from "./UserMenu";
 import SearchBar from "./SearchBar";
 
@@ -40,9 +41,22 @@ export default function Header() {
         </h1>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         {/* Search Input */}
         <SearchBar />
+
+        <button
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent(OPEN_SETTINGS_EVENT, { detail: "audio-output" }),
+            )
+          }
+          title="Audio output & PipeWire settings"
+          aria-label="Audio output & PipeWire settings"
+          className="w-8 h-8 rounded-full bg-th-inset hover:bg-th-inset-hover flex items-center justify-center text-th-text-muted hover:text-th-text-primary transition-colors"
+        >
+          <SlidersHorizontal size={16} />
+        </button>
 
         <UserMenu />
       </div>

@@ -18,7 +18,12 @@ import {
   deezerFlowPlayable,
 } from "../../lib/deezerSources";
 import type { PlayableSource } from "../../lib/trackSources";
-import type { AlbumDetail, Playlist, SearchResults } from "../../types";
+import {
+  getTidalImageUrl,
+  type AlbumDetail,
+  type Playlist,
+  type SearchResults,
+} from "../../types";
 import { CreatePlaylistModal } from "../AddToPlaylistMenu";
 import MediaCard from "../MediaCard";
 import MediaGrid, { MediaGridSkeleton } from "../MediaGrid";
@@ -50,6 +55,9 @@ export default function DeezerHome() {
   const [artists, setArtists] = useState<DeezerArtist[] | null>(null);
   const [charts, setCharts] = useState<SearchResults | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [playlistsLimit, setPlaylistsLimit] = useState(12);
+  const [albumsLimit, setAlbumsLimit] = useState(12);
+  const [artistsLimit, setArtistsLimit] = useState(12);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,14 +170,33 @@ export default function DeezerHome() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-[20px] font-bold text-th-text-primary">
               Your playlists
+              {playlists && playlists.length > 0 && (
+                <span className="ml-2 text-xs font-normal text-th-text-muted">
+                  ({playlists.length})
+                </span>
+              )}
             </h2>
-            <button
-              onClick={() => setCreateOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-th-elevated hover:bg-th-surface-hover border border-th-border-subtle text-xs font-semibold text-th-text-primary transition-colors"
-            >
-              <Plus size={14} />
-              New playlist
-            </button>
+            <div className="flex items-center gap-2">
+              {playlists && playlists.length > 12 && (
+                <button
+                  onClick={() =>
+                    setPlaylistsLimit((n) =>
+                      n >= playlists.length ? 12 : Math.min(playlists.length, n + 24),
+                    )
+                  }
+                  className="text-xs font-semibold text-th-text-secondary hover:text-th-text-primary transition-colors"
+                >
+                  {playlistsLimit >= playlists.length ? "Show less" : "Show more"}
+                </button>
+              )}
+              <button
+                onClick={() => setCreateOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-th-elevated hover:bg-th-surface-hover border border-th-border-subtle text-xs font-semibold text-th-text-primary transition-colors"
+              >
+                <Plus size={14} />
+                New playlist
+              </button>
+            </div>
           </div>
           {playlists === null ? (
             <MediaGridSkeleton count={6} />
@@ -177,7 +204,7 @@ export default function DeezerHome() {
             <p className="text-th-text-muted text-sm">No playlists yet</p>
           ) : (
             <MediaGrid>
-              {playlists.map((pl) => (
+              {playlists.slice(0, playlistsLimit).map((pl) => (
                 <MediaCard
                   key={pl.uuid}
                   item={pl}
@@ -208,16 +235,35 @@ export default function DeezerHome() {
         </section>
 
         <section className="mb-10">
-          <h2 className="text-[20px] font-bold text-th-text-primary mb-3">
-            Your albums
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[20px] font-bold text-th-text-primary">
+              Your albums
+              {albums && albums.length > 0 && (
+                <span className="ml-2 text-xs font-normal text-th-text-muted">
+                  ({albums.length})
+                </span>
+              )}
+            </h2>
+            {albums && albums.length > 12 && (
+              <button
+                onClick={() =>
+                  setAlbumsLimit((n) =>
+                    n >= albums.length ? 12 : Math.min(albums.length, n + 24),
+                  )
+                }
+                className="text-xs font-semibold text-th-text-secondary hover:text-th-text-primary transition-colors"
+              >
+                {albumsLimit >= albums.length ? "Show less" : "Show more"}
+              </button>
+            )}
+          </div>
           {albums === null ? (
             <MediaGridSkeleton count={6} />
           ) : albums.length === 0 ? (
             <p className="text-th-text-muted text-sm">No albums yet</p>
           ) : (
             <MediaGrid>
-              {albums.map((album) => (
+              {albums.slice(0, albumsLimit).map((album) => (
                 <MediaCard
                   key={album.id}
                   item={album}
@@ -249,11 +295,28 @@ export default function DeezerHome() {
 
         {artists && artists.length > 0 && (
           <section className="mb-10">
-            <h2 className="text-[20px] font-bold text-th-text-primary mb-3">
-              Your artists
-            </h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-[20px] font-bold text-th-text-primary">
+                Your artists
+                <span className="ml-2 text-xs font-normal text-th-text-muted">
+                  ({artists.length})
+                </span>
+              </h2>
+              {artists.length > 12 && (
+                <button
+                  onClick={() =>
+                    setArtistsLimit((n) =>
+                      n >= artists.length ? 12 : Math.min(artists.length, n + 24),
+                    )
+                  }
+                  className="text-xs font-semibold text-th-text-secondary hover:text-th-text-primary transition-colors"
+                >
+                  {artistsLimit >= artists.length ? "Show less" : "Show more"}
+                </button>
+              )}
+            </div>
             <MediaGrid>
-              {artists.map((artist) => (
+              {artists.slice(0, artistsLimit).map((artist) => (
                 <div
                   key={artist.id}
                   onClick={() =>
@@ -268,7 +331,7 @@ export default function DeezerHome() {
                   <div className="w-full aspect-square mb-3.5 relative rounded-full overflow-hidden bg-th-surface shadow-lg flex items-center justify-center">
                     {artist.picture ? (
                       <TidalImage
-                        src={artist.picture}
+                        src={getTidalImageUrl(artist.picture, 320)}
                         alt={artist.name}
                         type="artist"
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"

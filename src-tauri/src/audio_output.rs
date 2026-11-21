@@ -207,34 +207,74 @@ pub struct PipewireSink {
     pub description: String,
 }
 
-/// List PipeWire audio sinks through GStreamer's device monitor.
+/// List PipeWire audio sinks through `pactl list sinks` (which reports every
+/// PipeWire / WirePlumber sink regardless of whether `device.api` is `"alsa"`,
+/// `"bluez5"`, or virtual) and fall back to GStreamer's device monitor.
 pub fn list_pipewire_sinks() -> Vec<PipewireSink> {
-    use gstreamer as gst;
-    use gstreamer::prelude::*;
-    let monitor = gst::DeviceMonitor::new();
-    let caps = gst::Caps::new_empty_simple("audio/x-raw");
-    monitor.add_filter(Some("Audio/Sink"), Some(&caps));
-    if monitor.start().is_err() {
-        return Vec::new();
-    }
     let mut out = Vec::new();
-    for device in monitor.devices() {
-        let Some(props) = device.properties() else {
-            continue;
-        };
-        let api = props.get::<String>("device.api").unwrap_or_default();
-        if api != "pipewire" {
-            continue;
+
+    if let Ok(output) = std::process::Command::new("pactl")
+        .args(["list", "sinks"])
+        .env("LC_ALL", "C")
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for sink in crate::pipeline_probe::parse_pactl_objects(&stdout, "Sink") {
+                let name = sink
+                    .prop("node.name")
+                    .or_else(|| sink.field("Name"))
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let Some(name) = name else { continue };
+                let description = sink
+                    .field("Description")
+                    .or_else(|| sink.prop("node.description"))
+                    .or_else(|| sink.prop("device.description"))
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(name);
+                out.push(PipewireSink {
+                    name: name.to_string(),
+                    description: description.to_string(),
+                });
+            }
         }
-        let Ok(name) = props.get::<String>("node.name") else {
-            continue;
-        };
-        out.push(PipewireSink {
-            name,
-            description: device.display_name().to_string(),
-        });
     }
-    monitor.stop();
+
+    if out.is_empty() {
+        use gstreamer as gst;
+        use gstreamer::prelude::*;
+        let _ = gst::init();
+        let monitor = gst::DeviceMonitor::new();
+        let caps = gst::Caps::new_empty_simple("audio/x-raw");
+        monitor.add_filter(Some("Audio/Sink"), Some(&caps));
+        if monitor.start().is_ok() {
+            let mut devs = monitor.devices();
+            let mut waited = 0u32;
+            while devs.is_empty() && waited < 1000 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                devs = monitor.devices();
+                waited += 50;
+            }
+            for device in devs {
+                let Some(props) = device.properties() else {
+                    continue;
+                };
+                // WirePlumber sets `device.api = "alsa"` on hardware PipeWire nodes;
+                // presence of `node.name` identifies a PipeWire node.
+                let Ok(name) = props.get::<String>("node.name") else {
+                    continue;
+                };
+                out.push(PipewireSink {
+                    name,
+                    description: device.display_name().to_string(),
+                });
+            }
+            monitor.stop();
+        }
+    }
+
     out.sort_by(|a, b| a.description.cmp(&b.description));
     out.dedup_by(|a, b| a.name == b.name);
     out

@@ -1,6 +1,12 @@
 import { memo } from "react";
 import { useAtomValue } from "jotai";
-import { currentTrackAtom, streamInfoAtom } from "../atoms/playback";
+import {
+  bitPerfectAtom,
+  currentTrackAtom,
+  exclusiveModeAtom,
+  signalPathAtom,
+  streamInfoAtom,
+} from "../atoms/playback";
 
 interface QualityBadgeProps {
   onClick?: () => void;
@@ -11,9 +17,34 @@ const QualityBadge = memo(function QualityBadge({
 }: QualityBadgeProps) {
   const currentTrack = useAtomValue(currentTrackAtom);
   const streamInfo = useAtomValue(streamInfoAtom);
+  const exclusiveMode = useAtomValue(exclusiveModeAtom);
+  const bitPerfect = useAtomValue(bitPerfectAtom);
+  const signalPath = useAtomValue(signalPathAtom);
 
   const quality = streamInfo?.audioQuality || currentTrack?.audioQuality;
-  if (!quality) return null;
+  if (!quality) {
+    if (!onClick) return null;
+    const idleStack = bitPerfect
+      ? "BIT-PERFECT"
+      : exclusiveMode
+        ? "EXCLUSIVE ALSA"
+        : (signalPath?.osMixer?.server?.toUpperCase() ?? "PIPEWIRE");
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title="Show signal path"
+        className="flex flex-col items-end gap-0.5 cursor-pointer hover:opacity-80 transition-opacity"
+      >
+        <span className="text-[9px] text-th-text-faint font-medium tracking-wide inline">
+          {idleStack}
+        </span>
+        <span className="px-2 py-0.5 text-[9px] font-black rounded tracking-wider leading-none bg-th-button-hover text-th-text-primary border border-th-border-subtle">
+          SIGNAL PATH
+        </span>
+      </button>
+    );
+  }
 
   const isMax = quality === "HI_RES_LOSSLESS" || quality === "HI_RES";
   const isHiFi = quality === "LOSSLESS";

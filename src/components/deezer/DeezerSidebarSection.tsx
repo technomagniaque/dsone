@@ -10,7 +10,7 @@ import {
   type DeezerArtist,
 } from "../../api/deezer";
 import { useNavigation } from "../../hooks/useNavigation";
-import type { AlbumDetail, Playlist } from "../../types";
+import { getTidalImageUrl, type AlbumDetail, type Playlist } from "../../types";
 import { CreatePlaylistModal } from "../AddToPlaylistMenu";
 import TidalImage from "../TidalImage";
 import SidebarSkeleton from "../SidebarSkeleton";
@@ -210,7 +210,7 @@ export default function DeezerSidebarSection({
                   <div className="w-10 h-10 shrink-0 rounded overflow-hidden bg-th-surface-hover flex items-center justify-center">
                     {image ? (
                       <TidalImage
-                        src={image}
+                        src={getTidalImageUrl(image, 80)}
                         alt={pl.title}
                         type="playlist"
                         className="w-full h-full"
@@ -272,7 +272,7 @@ export default function DeezerSidebarSection({
                   <div className="w-10 h-10 shrink-0 rounded overflow-hidden bg-th-surface-hover flex items-center justify-center">
                     {album.cover ? (
                       <TidalImage
-                        src={album.cover}
+                        src={getTidalImageUrl(album.cover, 80)}
                         alt={album.title}
                         type="album"
                         className="w-full h-full"
@@ -328,7 +328,7 @@ export default function DeezerSidebarSection({
                   <div className="w-10 h-10 shrink-0 rounded-full overflow-hidden bg-th-surface-hover flex items-center justify-center">
                     {artist.picture ? (
                       <TidalImage
-                        src={artist.picture}
+                        src={getTidalImageUrl(artist.picture, 80)}
                         alt={artist.name}
                         type="artist"
                         className="w-full h-full"

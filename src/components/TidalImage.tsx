@@ -1,11 +1,34 @@
-import { memo, useState, useEffect } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ListMusic, Play, User } from "lucide-react";
 
-// In-memory blob URL cache — size-based LRU (50 MB) with revokeObjectURL on eviction.
+// In-memory blob URL cache — size-based LRU (200 MB) with revokeObjectURL on eviction.
 const MAX_BLOB_BYTES = 200 * 1024 * 1024; // 200 MB
+const MAX_CONCURRENT_FETCHES = 8;
 let blobTotalBytes = 0;
 let blobAccessCounter = 0;
+let activeFetches = 0;
+const fetchQueue: Array<() => void> = [];
+
+function runWithConcurrencyLimit<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const start = () => {
+      activeFetches++;
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeFetches--;
+          const next = fetchQueue.shift();
+          if (next) next();
+        });
+    };
+    if (activeFetches < MAX_CONCURRENT_FETCHES) {
+      start();
+    } else {
+      fetchQueue.push(start);
+    }
+  });
+}
 
 interface BlobEntry {
   url: string;
@@ -41,7 +64,9 @@ export function fetchCachedImageUrl(src: string): Promise<string> {
   const existing = inflight.get(src);
   if (existing) return existing;
 
-  const promise = invoke<ArrayBuffer>("get_image_bytes", { url: src })
+  const promise = runWithConcurrencyLimit(() =>
+    invoke<ArrayBuffer>("get_image_bytes", { url: src }),
+  )
     .then((buffer) => {
       const arr = new Uint8Array(buffer);
       const blob = new Blob([arr], { type: "image/jpeg" });
@@ -97,6 +122,7 @@ function TidalImageComponent({
   objectFit = "object-cover",
   onLoad,
 }: TidalImageProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [hasError, setHasError] = useState(false);
   // Synchronous cache check — if the blob is already in memory, skip loading entirely
   const [blobUrl, setBlobUrl] = useState<string | undefined>(() => {
@@ -109,9 +135,32 @@ function TidalImageComponent({
     return undefined;
   });
   const [isLoading, setIsLoading] = useState(blobUrl === undefined);
+  const [isVisible, setIsVisible] = useState(
+    () => typeof IntersectionObserver === "undefined" || blobUrl !== undefined,
+  );
 
   useEffect(() => {
-    if (!src) return;
+    if (isVisible || typeof IntersectionObserver === "undefined") return;
+    const el = containerRef.current;
+    if (!el) {
+      setIsVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isVisible]);
+
+  useEffect(() => {
+    if (!src || !isVisible) return;
 
     // Sync cache hit — skip loading shimmer
     const cached = blobCache.get(src);
@@ -138,7 +187,7 @@ function TidalImageComponent({
     return () => {
       cancelled = true;
     };
-  }, [src]);
+  }, [src, isVisible]);
 
   if (!src || hasError) {
     return (
@@ -158,20 +207,21 @@ function TidalImageComponent({
 
   if (!blobUrl) {
     return (
-      <div className={`relative ${className}`}>
+      <div ref={containerRef} className={`relative ${className}`}>
         <div className="absolute inset-0 bg-th-surface-hover animate-pulse" />
       </div>
     );
   }
 
   return (
-    <div className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative ${className}`}>
       {isLoading && (
         <div className="absolute inset-0 bg-th-surface-hover animate-pulse" />
       )}
       <img
         src={blobUrl}
         alt={alt}
+        decoding="async"
         draggable={false}
         className={`w-full h-full ${isLoading ? "opacity-0" : "opacity-100"} transition-opacity ${objectFit}`}
         onError={() => setHasError(true)}
