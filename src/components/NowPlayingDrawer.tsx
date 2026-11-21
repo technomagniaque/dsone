@@ -11,6 +11,7 @@ import {
   ListPlus,
   GripVertical,
   Maximize2,
+  RefreshCw,
 } from "lucide-react";
 import ExplicitBadge from "./ExplicitBadge";
 import AiBadge from "./AiBadge";
@@ -62,7 +63,13 @@ import {
   getTrackCredits,
   getArtistBio,
 } from "../api/tidal";
-import { deezerGetTrackMix } from "../api/deezer";
+import {
+  deezerGetLyrics,
+  deezerGetTrackCredits,
+  deezerGetTrackMix,
+} from "../api/deezer";
+import { deezerQueueSyncStatusAtom, deezerUserAtom } from "../atoms/deezer";
+import { useDeezerQueueSyncActions } from "../hooks/useDeezerQueueSync";
 import BioText from "./BioText";
 import { isTrackUnavailable } from "../lib/trackAvailability";
 import { COVER_TEXT_GAP, MAX_COVER_SIZE } from "../lib/coverFit";
@@ -132,6 +139,9 @@ const QueueTab = memo(function QueueTab({
     navigateToFavorites,
   } = useNavigation();
   const { showToast } = useToast();
+  const deezerUser = useAtomValue(deezerUserAtom);
+  const deezerSyncStatus = useAtomValue(deezerQueueSyncStatusAtom);
+  const { pullNow } = useDeezerQueueSyncActions();
 
   const sourceIsNavigable = isNavigableSource(source?.type);
 
@@ -465,12 +475,28 @@ const QueueTab = memo(function QueueTab({
                 "Next up"
               )}
             </h3>
-            <button
-              onClick={() => clearQueue()}
-              className="text-[11px] text-th-text-muted hover:text-th-text-primary transition-colors"
-            >
-              Clear
-            </button>
+            <div className="flex items-center gap-3">
+              {deezerUser && (
+                <button
+                  onClick={() => void pullNow({ allowHistoryFallback: true })}
+                  disabled={deezerSyncStatus.syncing}
+                  className="inline-flex items-center gap-1 text-[11px] text-th-text-muted hover:text-th-accent transition-colors disabled:opacity-50"
+                  title="Sync queue from Deezer on your phone or other devices"
+                >
+                  <RefreshCw
+                    size={11}
+                    className={deezerSyncStatus.syncing ? "animate-spin" : ""}
+                  />
+                  Sync Deezer
+                </button>
+              )}
+              <button
+                onClick={() => clearQueue()}
+                className="text-[11px] text-th-text-muted hover:text-th-text-primary transition-colors"
+              >
+                Clear
+              </button>
+            </div>
           </div>
           <div
             ref={listRef}
@@ -1057,13 +1083,11 @@ const LyricsTab = memo(function LyricsTab() {
     activeLineRef.current = -1;
     setUserScrolled(false);
 
-    // Lyrics come from TIDAL; a Deezer id would fetch some other song's.
-    if (isDeezer(currentTrack)) {
-      setLoading(false);
-      return;
-    }
+    const fetchLyrics = isDeezer(currentTrack)
+      ? deezerGetLyrics(currentTrack.id)
+      : getTrackLyrics(currentTrack.id);
 
-    getTrackLyrics(currentTrack.id)
+    fetchLyrics
       .then((result) => {
         if (!active) return;
         setLyrics(result);
@@ -1284,13 +1308,11 @@ const CreditsTab = memo(function CreditsTab() {
     setCreditsError(null);
     setCredits([]);
 
-    // Credits come from TIDAL; skip them for a Deezer track.
-    if (isDeezer(currentTrack)) {
-      setCreditsLoading(false);
-      return;
-    }
+    const fetchCredits = isDeezer(currentTrack)
+      ? deezerGetTrackCredits(currentTrack.id)
+      : getTrackCredits(currentTrack.id);
 
-    getTrackCredits(currentTrack.id)
+    fetchCredits
       .then((result) => {
         if (active) setCredits(result);
       })

@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Play, Plus, User } from "lucide-react";
-import { deezerPlaylistsVersionAtom, deezerUserAtom } from "../../atoms/deezer";
+import { Play, Plus, RefreshCw, Smartphone, User } from "lucide-react";
+import {
+  deezerPlaylistsVersionAtom,
+  deezerQueueSyncStatusAtom,
+  deezerUserAtom,
+} from "../../atoms/deezer";
 import {
   deezerGetCharts,
+  deezerGetHistory,
   deezerGetUserAlbums,
   deezerGetUserArtists,
   deezerGetUserPlaylists,
@@ -12,6 +17,7 @@ import {
 import { useNavigation } from "../../hooks/useNavigation";
 import { usePlaySource } from "../../hooks/usePlaySource";
 import { useDeezerMediaPlay } from "../../hooks/useDeezerMediaPlay";
+import { useDeezerQueueSyncActions } from "../../hooks/useDeezerQueueSync";
 import { useToast } from "../../contexts/ToastContext";
 import {
   deezerFavoritesPlayable,
@@ -23,6 +29,7 @@ import {
   type AlbumDetail,
   type Playlist,
   type SearchResults,
+  type Track,
 } from "../../types";
 import { CreatePlaylistModal } from "../AddToPlaylistMenu";
 import MediaCard from "../MediaCard";
@@ -44,15 +51,18 @@ function greeting(): string {
 export default function DeezerHome() {
   const user = useAtomValue(deezerUserAtom);
   const playlistsVersion = useAtomValue(deezerPlaylistsVersionAtom);
+  const syncStatus = useAtomValue(deezerQueueSyncStatusAtom);
   const bumpPlaylists = useSetAtom(deezerPlaylistsVersionAtom);
   const { navigateTo, navigateToPlaylist, navigateToAlbum, navigateToArtist } =
     useNavigation();
   const playSource = usePlaySource();
   const playDeezerMedia = useDeezerMediaPlay();
+  const { pullNow } = useDeezerQueueSyncActions();
   const { showToast } = useToast();
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
   const [albums, setAlbums] = useState<AlbumDetail[] | null>(null);
   const [artists, setArtists] = useState<DeezerArtist[] | null>(null);
+  const [historyTracks, setHistoryTracks] = useState<Track[]>([]);
   const [charts, setCharts] = useState<SearchResults | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [playlistsLimit, setPlaylistsLimit] = useState(12);
@@ -91,6 +101,11 @@ export default function DeezerHome() {
       .catch((err) => {
         console.error("Failed to load Deezer charts:", err);
       });
+    deezerGetHistory(12)
+      .then((h) => !cancelled && setHistoryTracks(h))
+      .catch((err) => {
+        console.error("Failed to load Deezer history:", err);
+      });
     return () => {
       cancelled = true;
     };
@@ -122,13 +137,31 @@ export default function DeezerHome() {
   return (
     <div className="flex-1 bg-linear-to-b from-th-surface to-th-base min-h-full">
       <PageContainer className="px-8 py-8">
-        <p className="text-[12px] font-bold text-th-text-secondary uppercase tracking-widest">
-          Deezer
-        </p>
-        <h1 className="text-[32px] font-extrabold text-th-text-primary tracking-tight mb-6">
-          {greeting()}
-          {user?.name ? `, ${user.name}` : ""}
-        </h1>
+        <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
+          <div>
+            <p className="text-[12px] font-bold text-th-text-secondary uppercase tracking-widest">
+              Deezer
+            </p>
+            <h1 className="text-[32px] font-extrabold text-th-text-primary tracking-tight">
+              {greeting()}
+              {user?.name ? `, ${user.name}` : ""}
+            </h1>
+          </div>
+          <button
+            type="button"
+            disabled={syncStatus.syncing}
+            onClick={() => void pullNow({ allowHistoryFallback: true })}
+            className="flex items-center gap-2 px-4 py-2 rounded-full bg-th-elevated hover:bg-th-surface-hover border border-th-border-subtle text-xs font-semibold text-th-text-primary transition-colors disabled:opacity-50"
+            title="Pull currently playing track & queue from Deezer on your phone or other devices"
+          >
+            {syncStatus.syncing ? (
+              <RefreshCw size={14} className="animate-spin text-th-accent" />
+            ) : (
+              <Smartphone size={14} className="text-th-accent" />
+            )}
+            Resume from phone / Sync queue
+          </button>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
           {tiles.map((t) => (
@@ -165,6 +198,35 @@ export default function DeezerHome() {
             </div>
           ))}
         </div>
+
+        {historyTracks.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-[20px] font-bold text-th-text-primary mb-3">
+              Recently played
+            </h2>
+            <TrackList
+              tracks={historyTracks.slice(0, 10)}
+              onPlay={(track) =>
+                void playSource(
+                  {
+                    meta: {
+                      type: "deezer-history",
+                      id: "deezer-history",
+                      name: "Recently played",
+                    },
+                    loaded: historyTracks,
+                  },
+                  { startAt: track },
+                )
+              }
+              showDateAdded={false}
+              showArtist={true}
+              showAlbum={true}
+              showCover={true}
+              context="playlist"
+            />
+          </section>
+        )}
 
         <section className="mb-10">
           <div className="flex items-center justify-between mb-3">

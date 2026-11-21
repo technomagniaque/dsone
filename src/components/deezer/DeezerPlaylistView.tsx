@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
-import { Loader2, Pencil, Trash2, X } from "lucide-react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { Heart, Loader2, Pencil, Trash2, X } from "lucide-react";
 import {
   deezerDeletePlaylist,
   deezerGetPlaylist,
+  deezerSetFavoritePlaylist,
   deezerUpdatePlaylist,
 } from "../../api/deezer";
-import { deezerPlaylistsVersionAtom, deezerUserAtom } from "../../atoms/deezer";
+import {
+  deezerFavoritePlaylistIdsAtom,
+  deezerPlaylistsVersionAtom,
+  deezerUserAtom,
+} from "../../atoms/deezer";
 import { useToast } from "../../contexts/ToastContext";
 import { getDeezerShareUrl } from "../../lib/deezerSources";
 import { safeErrorMessage } from "../../lib/errorUtils";
@@ -27,6 +32,10 @@ export default function DeezerPlaylistView({
 }: DeezerPlaylistViewProps) {
   const user = useAtomValue(deezerUserAtom);
   const bumpPlaylists = useSetAtom(deezerPlaylistsVersionAtom);
+  const [favPlaylistIds, setFavPlaylistIds] = useAtom(
+    deezerFavoritePlaylistIdsAtom,
+  );
+  const [favPending, setFavPending] = useState(false);
   const { showToast } = useToast();
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -67,6 +76,32 @@ export default function DeezerPlaylistView({
   const image = playlist?.squareImage || playlist?.image || playlistInfo?.image;
   const isUserPlaylist =
     !!user && !!playlist?.creator?.id && playlist.creator.id === user.id;
+  const isFavoritedPlaylist = favPlaylistIds.has(playlistId);
+
+  const handleToggleFavoritePlaylist = async () => {
+    if (favPending) return;
+    setFavPending(true);
+    try {
+      const nextFav = !isFavoritedPlaylist;
+      await deezerSetFavoritePlaylist(Number(playlistId), nextFav);
+      setFavPlaylistIds((prev) => {
+        const next = new Set(prev);
+        if (nextFav) next.add(playlistId);
+        else next.delete(playlistId);
+        return next;
+      });
+      bumpPlaylists((v) => v + 1);
+      showToast(
+        nextFav
+          ? "Added playlist to Deezer favorites"
+          : "Removed playlist from Deezer favorites",
+      );
+    } catch {
+      showToast("Failed to update playlist favorites", "error");
+    } finally {
+      setFavPending(false);
+    }
+  };
 
   const openEdit = () => {
     setEditTitle(title);
@@ -166,6 +201,39 @@ export default function DeezerPlaylistView({
                 <span className="text-[11px] font-medium">Delete</span>
               </button>
             </>
+          ) : user ? (
+            <button
+              onClick={handleToggleFavoritePlaylist}
+              disabled={favPending}
+              className={`flex flex-col items-center gap-1.5 transition-colors disabled:opacity-60 ${
+                isFavoritedPlaylist
+                  ? "text-th-accent hover:brightness-110"
+                  : "text-th-text-muted hover:text-th-text-primary"
+              }`}
+              title={
+                isFavoritedPlaylist
+                  ? "Remove playlist from favorites"
+                  : "Add playlist to favorites"
+              }
+              aria-label={
+                isFavoritedPlaylist
+                  ? "Unfavorite playlist"
+                  : "Favorite playlist"
+              }
+            >
+              {favPending ? (
+                <Loader2 size={20} className="animate-spin" />
+              ) : (
+                <Heart
+                  size={20}
+                  fill={isFavoritedPlaylist ? "currentColor" : "none"}
+                  strokeWidth={isFavoritedPlaylist ? 0 : 2}
+                />
+              )}
+              <span className="text-[11px] font-medium">
+                {isFavoritedPlaylist ? "Added" : "Add"}
+              </span>
+            </button>
           ) : undefined
         }
       />

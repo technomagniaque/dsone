@@ -1,6 +1,41 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { DeezerQuality, DeezerUser } from "../atoms/deezer";
-import type { AlbumDetail, Playlist, SearchResults, Track } from "../types";
+import type {
+  AlbumDetail,
+  Credit,
+  Lyrics,
+  Playlist,
+  SearchResults,
+  Track,
+} from "../types";
+
+export interface DeezerCloudQueueState {
+  tracks: Track[];
+  position: number;
+  repeatMode: number;
+  shuffled: boolean;
+  version: string;
+  updatedAt?: string;
+  localQueueId?: string;
+  sourceUserAgent?: string;
+}
+
+export interface DeezerPushQueueInput {
+  trackIds: number[];
+  position: number;
+  repeatMode: number;
+  shuffled: boolean;
+  previousVersion?: string;
+  localQueueId?: string;
+  contextId?: string;
+  contextType?: string;
+}
+
+export interface DeezerPushQueueResult {
+  version: string;
+  updatedAt?: string;
+  localQueueId: string;
+}
 
 /** Deezer artist header, as returned by `deezer_get_artist`. */
 export interface DeezerArtist {
@@ -169,6 +204,37 @@ export const deezerGetArtistRadio = async (artistId: number) =>
 
 export const deezerSetFavoriteTrack = (trackId: number, favorite: boolean) =>
   invoke<null>("deezer_set_favorite_track", { trackId, favorite });
+
+export const deezerSetFavoriteAlbum = (albumId: number, favorite: boolean) =>
+  invoke<null>("deezer_set_favorite_album", { albumId, favorite });
+
+export const deezerSetFavoriteArtist = (artistId: number, favorite: boolean) =>
+  invoke<null>("deezer_set_favorite_artist", { artistId, favorite });
+
+export const deezerSetFavoritePlaylist = (
+  playlistId: number,
+  favorite: boolean,
+) => invoke<null>("deezer_set_favorite_playlist", { playlistId, favorite });
+
+export const deezerPullCloudQueue = async (): Promise<DeezerCloudQueueState | null> => {
+  const res = await invoke<DeezerCloudQueueState | null>(
+    "deezer_pull_cloud_queue",
+  );
+  if (!res) return null;
+  return { ...res, tracks: tagAll(res.tracks) };
+};
+
+export const deezerPushCloudQueue = (input: DeezerPushQueueInput) =>
+  invoke<DeezerPushQueueResult>("deezer_push_cloud_queue", { input });
+
+export const deezerGetHistory = async (limit?: number) =>
+  tagAll(await invoke<Track[]>("deezer_get_history", { limit }));
+
+export const deezerGetLyrics = (trackId: number) =>
+  invoke<Lyrics>("deezer_get_lyrics", { trackId });
+
+export const deezerGetTrackCredits = (trackId: number) =>
+  invoke<Credit[]>("deezer_get_track_credits", { trackId });
 
 export const getDeezerQuality = () =>
   invoke<DeezerQuality>("get_deezer_quality");

@@ -69,8 +69,38 @@ pub async fn notify_track_started(
         artist_mbids: Vec::new(),
     };
     // A Deezer id is not a TIDAL id: never report it to TIDAL. Passing `None`
-    // still closes out (and reports) a displaced TIDAL track.
-    let tidal_track_id = if payload.provider.as_deref() == Some("deezer") {
+    // still closes out (and reports) a displaced TIDAL track. For Deezer tracks,
+    // log the listen to Deezer (`log.listen`) in the background so cross-device
+    // history and Flow recommendations stay up to date.
+    let is_deezer = payload.provider.as_deref() == Some("deezer");
+    if is_deezer {
+        if let Some(track_id) = payload.track_id {
+            let deezer = state.deezer.clone();
+            let duration = payload.duration_secs as u64;
+            let (ctx_type, ctx_id) = match &source {
+                Some((t, id)) => (Some(t.clone()), Some(id.clone())),
+                None => (None, None),
+            };
+            tokio::spawn(async move {
+                let fmt = deezer.quality().as_str().to_string();
+                if let Err(e) = deezer
+                    .log_listen(
+                        track_id,
+                        duration.min(30),
+                        &fmt,
+                        false,
+                        0,
+                        ctx_id.as_deref(),
+                        ctx_type.as_deref(),
+                    )
+                    .await
+                {
+                    log::debug!("[deezer] log.listen failed: {e}");
+                }
+            });
+        }
+    }
+    let tidal_track_id = if is_deezer {
         None
     } else {
         payload.track_id

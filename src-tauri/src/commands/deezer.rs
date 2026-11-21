@@ -471,3 +471,111 @@ pub async fn set_next_deezer_track(
         .map_err(SoneError::Audio)?;
     Ok(info)
 }
+
+// ---------------------------------------------------------------------------
+// Cloud Queue sync (Android <-> dsone), listening history, lyrics & credits
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn deezer_pull_cloud_queue(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::deezer::queue_sync::DzCloudQueueState>, SoneError> {
+    state.deezer.pull_cloud_queue().await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_push_cloud_queue(
+    state: State<'_, AppState>,
+    input: crate::deezer::queue_sync::DzPushQueueInput,
+) -> Result<crate::deezer::queue_sync::DzPushQueueResult, SoneError> {
+    state.deezer.push_cloud_queue(input).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_get_history(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<DzTrack>, SoneError> {
+    state.deezer.listening_history(limit.unwrap_or(50)).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_log_listen(
+    state: State<'_, AppState>,
+    track_id: u64,
+    listened_secs: u64,
+    format: Option<String>,
+    is_shuffle: Option<bool>,
+    repeat_mode: Option<u8>,
+    context_id: Option<String>,
+    context_type: Option<String>,
+) -> Result<(), SoneError> {
+    let fmt = format.unwrap_or_else(|| state.deezer.quality().as_str().to_string());
+    state
+        .deezer
+        .log_listen(
+            track_id,
+            listened_secs,
+            &fmt,
+            is_shuffle.unwrap_or(false),
+            repeat_mode.unwrap_or(0),
+            context_id.as_deref(),
+            context_type.as_deref(),
+        )
+        .await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_get_lyrics(
+    state: State<'_, AppState>,
+    track_id: u64,
+) -> Result<crate::tidal_api::TidalLyrics, SoneError> {
+    state.deezer.lyrics(track_id).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_get_track_credits(
+    state: State<'_, AppState>,
+    track_id: u64,
+) -> Result<Vec<crate::tidal_api::TidalCredit>, SoneError> {
+    state.deezer.track_credits(track_id).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_set_favorite_album(
+    state: State<'_, AppState>,
+    album_id: u64,
+    favorite: bool,
+) -> Result<(), SoneError> {
+    if favorite {
+        state.deezer.add_favorite_album(album_id).await
+    } else {
+        state.deezer.remove_favorite_album(album_id).await
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_set_favorite_artist(
+    state: State<'_, AppState>,
+    artist_id: u64,
+    favorite: bool,
+) -> Result<(), SoneError> {
+    if favorite {
+        state.deezer.add_favorite_artist(artist_id).await
+    } else {
+        state.deezer.remove_favorite_artist(artist_id).await
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_set_favorite_playlist(
+    state: State<'_, AppState>,
+    playlist_id: u64,
+    favorite: bool,
+) -> Result<(), SoneError> {
+    if favorite {
+        state.deezer.add_favorite_playlist(playlist_id).await
+    } else {
+        state.deezer.remove_favorite_playlist(playlist_id).await
+    }
+}

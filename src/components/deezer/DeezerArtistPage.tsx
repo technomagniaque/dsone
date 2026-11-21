@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { useAtom } from "jotai";
 import {
+  Heart,
   Loader2,
   Music,
   Play,
@@ -13,8 +15,10 @@ import { useNavigation } from "../../hooks/useNavigation";
 import { useToast } from "../../contexts/ToastContext";
 import {
   deezerGetArtist,
+  deezerSetFavoriteArtist,
   type DeezerArtistPage as Page,
 } from "../../api/deezer";
+import { deezerFavoriteArtistIdsAtom } from "../../atoms/deezer";
 import {
   deezerArtistRadioPlayable,
   getDeezerShareUrl,
@@ -53,6 +57,9 @@ export default function DeezerArtistPage({
   const [error, setError] = useState<string | null>(null);
   const [showAllTracks, setShowAllTracks] = useState(false);
   const [radioLoading, setRadioLoading] = useState(false);
+  const [favArtistIds, setFavArtistIds] = useAtom(deezerFavoriteArtistIdsAtom);
+  const [favPending, setFavPending] = useState(false);
+  const isFollowed = favArtistIds.has(artistId);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +111,28 @@ export default function DeezerArtistPage({
     meta: { type: "deezer-artist", id: artistId, name, image: picture },
     loaded: topTracks,
   });
+
+  const handleToggleFollow = async () => {
+    if (favPending) return;
+    setFavPending(true);
+    try {
+      const nextFav = !isFollowed;
+      await deezerSetFavoriteArtist(artistId, nextFav);
+      setFavArtistIds((prev) => {
+        const next = new Set(prev);
+        if (nextFav) next.add(artistId);
+        else next.delete(artistId);
+        return next;
+      });
+      showToast(
+        nextFav ? `Following ${name}` : `Unfollowed ${name}`,
+      );
+    } catch {
+      showToast("Failed to update followed artists", "error");
+    } finally {
+      setFavPending(false);
+    }
+  };
 
   const handleShare = async () => {
     try {
@@ -197,15 +226,41 @@ export default function DeezerArtistPage({
                 Radio
               </button>
             </div>
-            <button
-              onClick={handleShare}
-              className="flex flex-col items-center gap-1.5 text-th-text-muted hover:text-th-text-primary transition-colors"
-              title="Copy share link"
-              aria-label="Share artist"
-            >
-              <Share size={22} />
-              <span className="text-[11px] font-medium">Share</span>
-            </button>
+            <div className="flex items-end gap-6">
+              <button
+                onClick={handleToggleFollow}
+                disabled={favPending}
+                className={`flex flex-col items-center gap-1.5 transition-colors disabled:opacity-60 ${
+                  isFollowed
+                    ? "text-th-accent hover:brightness-110"
+                    : "text-th-text-muted hover:text-th-text-primary"
+                }`}
+                title={isFollowed ? "Unfollow artist" : "Follow artist"}
+                aria-label={isFollowed ? "Unfollow artist" : "Follow artist"}
+              >
+                {favPending ? (
+                  <Loader2 size={22} className="animate-spin" />
+                ) : (
+                  <Heart
+                    size={22}
+                    fill={isFollowed ? "currentColor" : "none"}
+                    strokeWidth={isFollowed ? 0 : 2}
+                  />
+                )}
+                <span className="text-[11px] font-medium">
+                  {isFollowed ? "Following" : "Follow"}
+                </span>
+              </button>
+              <button
+                onClick={handleShare}
+                className="flex flex-col items-center gap-1.5 text-th-text-muted hover:text-th-text-primary transition-colors"
+                title="Copy share link"
+                aria-label="Share artist"
+              >
+                <Share size={22} />
+                <span className="text-[11px] font-medium">Share</span>
+              </button>
+            </div>
           </div>
         </PageContainer>
       </div>

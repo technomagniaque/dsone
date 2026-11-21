@@ -82,7 +82,7 @@ impl MprisHandle {
                     .can_set_fullscreen(true)
                     .fullscreen(false)
                     .has_track_list(false)
-                    .supported_uri_schemes(vec!["tidal".to_string()])
+                    .supported_uri_schemes(vec!["tidal".to_string(), "deezer".to_string()])
                     .supported_mime_types(vec![
                         "audio/flac".to_string(),
                         "audio/mpeg".to_string(),

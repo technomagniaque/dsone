@@ -18,6 +18,7 @@ import {
   useDeezerAutologListener,
   useDeezerLoginWindowEvents,
 } from "../hooks/useDeezerBrowserLogin";
+import { useDeezerQueueSync } from "../hooks/useDeezerQueueSync";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { parseTidalUrl } from "../lib/tidalUrl";
 import { updateToastSeenAtom } from "../atoms/updates";
@@ -191,6 +192,7 @@ export function AppInitializer() {
   // browser), any time and without TIDAL.
   useDeezerLoginWindowEvents();
   useDeezerAutologListener();
+  useDeezerQueueSync();
 
   // Preload subscribes to auth state (single re-render on login)
   const isAuthenticated = useAtomValue(isAuthenticatedAtom);

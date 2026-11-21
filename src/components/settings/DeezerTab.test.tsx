@@ -55,5 +55,9 @@ describe("DeezerTab Hi-Fi 24-bit / 192 kHz quality picker", () => {
     expect(invoke).toHaveBeenCalledWith("set_deezer_quality", {
       quality: "MP3_320",
     });
+
+    expect(screen.getByText(/Playback sync/i)).toBeTruthy();
+    expect(screen.getByText("Sync from Deezer")).toBeTruthy();
+    expect(screen.getByText("Push queue")).toBeTruthy();
   });
 });

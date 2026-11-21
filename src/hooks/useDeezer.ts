@@ -2,6 +2,9 @@ import { useCallback } from "react";
 import { useAtomValue, useStore } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  deezerFavoriteAlbumIdsAtom,
+  deezerFavoriteArtistIdsAtom,
+  deezerFavoritePlaylistIdsAtom,
   deezerFavoriteTrackIdsAtom,
   deezerUserAtom,
   type DeezerUser,
@@ -16,18 +19,45 @@ import {
 import { currentViewAtom } from "../atoms/navigation";
 import {
   deezerGetFavoriteTracks,
+  deezerGetUserAlbums,
+  deezerGetUserArtists,
+  deezerGetUserPlaylists,
   deezerLogin,
   deezerLogout,
 } from "../api/deezer";
 import { isDeezer } from "../lib/provider";
 
-/** Fill the Deezer favourite-id set (non-blocking, errors only logged). */
+/** Fill the Deezer favourite-id sets (non-blocking, errors only logged). */
 export function loadDeezerFavoriteIds(store: ReturnType<typeof useStore>) {
   deezerGetFavoriteTracks()
     .then((tracks) =>
       store.set(deezerFavoriteTrackIdsAtom, new Set(tracks.map((t) => t.id))),
     )
     .catch((err) => console.error("Failed to load Deezer favorites:", err));
+  deezerGetUserAlbums()
+    .then((albums) =>
+      store.set(deezerFavoriteAlbumIdsAtom, new Set(albums.map((a) => a.id))),
+    )
+    .catch((err) =>
+      console.error("Failed to load Deezer favorite albums:", err),
+    );
+  deezerGetUserArtists()
+    .then((artists) =>
+      store.set(deezerFavoriteArtistIdsAtom, new Set(artists.map((a) => a.id))),
+    )
+    .catch((err) =>
+      console.error("Failed to load Deezer favorite artists:", err),
+    );
+  deezerGetUserPlaylists()
+    .then((playlists) =>
+      store.set(
+        deezerFavoritePlaylistIdsAtom,
+        new Set(playlists.map((p) => p.uuid)),
+      ),
+    )
+    .catch((err) =>
+      console.error("Failed to load Deezer favorite playlists:", err),
+    );
 }
 
 export function useDeezer() {
@@ -68,6 +98,9 @@ export function useDeezer() {
     } finally {
       store.set(deezerUserAtom, null);
       store.set(deezerFavoriteTrackIdsAtom, new Set<number>());
+      store.set(deezerFavoriteAlbumIdsAtom, new Set<number>());
+      store.set(deezerFavoriteArtistIdsAtom, new Set<number>());
+      store.set(deezerFavoritePlaylistIdsAtom, new Set<string>());
       store.set(currentViewAtom, { type: "home" });
     }
   }, [store]);

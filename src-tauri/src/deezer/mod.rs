@@ -4,6 +4,7 @@
 pub mod api;
 pub mod crypto;
 pub mod models;
+pub mod queue_sync;
 pub mod stream_server;
 
 use std::collections::{BTreeMap, HashMap};
@@ -239,6 +240,7 @@ pub struct ResolvedStream {
 pub struct DeezerClient {
     http: Http,
     session: Mutex<Option<Session>>,
+    pipe_jwt: Mutex<Option<queue_sync::PipeJwt>>,
     quality: Mutex<Quality>,
     streams: Mutex<HashMap<u64, ResolvedStream>>,
     server: tokio::sync::OnceCell<stream_server::ServerHandle>,
@@ -257,6 +259,7 @@ impl DeezerClient {
         Self {
             http: Http(http),
             session: Mutex::new(None),
+            pipe_jwt: Mutex::new(None),
             quality: Mutex::new(Quality::parse(quality).unwrap_or(Quality::Flac)),
             streams: Mutex::new(HashMap::new()),
             server: tokio::sync::OnceCell::new(),
@@ -270,6 +273,7 @@ impl DeezerClient {
         Self {
             http: Http(http),
             session: Mutex::new(None),
+            pipe_jwt: Mutex::new(None),
             quality: Mutex::new(Quality::Flac),
             streams: Mutex::new(HashMap::new()),
             server: tokio::sync::OnceCell::new(),
@@ -318,6 +322,7 @@ impl DeezerClient {
         let user = session.user.clone();
         self.persist_arl(&session.arl)?;
         *self.lock_session() = Some(session);
+        *self.pipe_jwt.lock().unwrap_or_else(|p| p.into_inner()) = None;
         self.lock_streams().clear();
         log::info!("[deezer] signed in (user id {})", user.id);
         Ok(user)
@@ -346,6 +351,7 @@ impl DeezerClient {
 
     pub fn logout(&self) {
         *self.lock_session() = None;
+        *self.pipe_jwt.lock().unwrap_or_else(|p| p.into_inner()) = None;
         self.lock_streams().clear();
         self.forget_arl();
     }
@@ -931,6 +937,238 @@ impl DeezerClient {
         Ok(())
     }
 
+    // ---- cloud queue sync & play reporting (Android <-> dsone) -------------
+
+    async fn pipe_jwt(&self) -> Result<String, SoneError> {
+        {
+            let guard = self.pipe_jwt.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(cached) = guard.as_ref().filter(|j| j.is_fresh()) {
+                return Ok(cached.token.clone());
+            }
+        }
+        let arl = self
+            .lock_session()
+            .as_ref()
+            .map(|s| s.arl.clone())
+            .ok_or(SoneError::NotAuthenticated)?;
+        let jwt = queue_sync::fetch_pipe_jwt(&self.http, &arl).await?;
+        let token = jwt.token.clone();
+        *self.pipe_jwt.lock().unwrap_or_else(|p| p.into_inner()) = Some(jwt);
+        Ok(token)
+    }
+
+    fn invalidate_pipe_jwt(&self) {
+        *self.pipe_jwt.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    /// Pull the synchronized Cloud Queue state from Deezer's Pipe GraphQL API
+    /// (shared with Deezer Android, iOS, Web and Desktop) and hydrate the tracks.
+    pub async fn pull_cloud_queue(
+        &self,
+    ) -> Result<Option<queue_sync::DzCloudQueueState>, SoneError> {
+        let mut jwt = self.pipe_jwt().await?;
+        let raw = match queue_sync::pull_raw_queue(&self.http, &jwt).await {
+            Err(SoneError::NotAuthenticated) => {
+                self.invalidate_pipe_jwt();
+                jwt = self.pipe_jwt().await?;
+                queue_sync::pull_raw_queue(&self.http, &jwt).await?
+            }
+            other => other?,
+        };
+        let Some(parsed) = raw else {
+            return Ok(None);
+        };
+        if parsed.track_ids.is_empty() {
+            return Ok(None);
+        }
+        let songs = self.song_list(&parsed.track_ids).await?;
+        let by_id: HashMap<u64, DzTrack> = models::gw_tracks(&Value::Array(songs))
+            .into_iter()
+            .map(|t| (t.id, t))
+            .collect();
+        let mut tracks = Vec::with_capacity(parsed.track_ids.len());
+        let mut mapped_pos = 0usize;
+        for (i, id) in parsed.track_ids.iter().enumerate() {
+            if let Some(t) = by_id.get(id) {
+                if i == parsed.position {
+                    mapped_pos = tracks.len();
+                }
+                tracks.push(t.clone());
+            }
+        }
+        if tracks.is_empty() {
+            return Ok(None);
+        }
+        let position = mapped_pos.min(tracks.len() - 1);
+        Ok(Some(queue_sync::DzCloudQueueState {
+            tracks,
+            position,
+            repeat_mode: parsed.repeat_mode,
+            shuffled: parsed.shuffled,
+            version: parsed.version,
+            updated_at: parsed.updated_at,
+            local_queue_id: parsed.local_queue_id,
+            source_user_agent: parsed.source_user_agent,
+        }))
+    }
+
+    /// Push dsone's active Deezer queue & current track index to Deezer Cloud Queue.
+    pub async fn push_cloud_queue(
+        &self,
+        input: queue_sync::DzPushQueueInput,
+    ) -> Result<queue_sync::DzPushQueueResult, SoneError> {
+        let mut jwt = self.pipe_jwt().await?;
+        match queue_sync::push_queue_state(&self.http, &jwt, &input).await {
+            Err(SoneError::NotAuthenticated) => {
+                self.invalidate_pipe_jwt();
+                jwt = self.pipe_jwt().await?;
+                queue_sync::push_queue_state(&self.http, &jwt, &input).await
+            }
+            other => other,
+        }
+    }
+
+    /// Cross-device listening history (`user.getSongsHistory`).
+    pub async fn listening_history(&self, limit: usize) -> Result<Vec<DzTrack>, SoneError> {
+        let nb = limit.clamp(1, 200);
+        let r = self
+            .gw("user.getSongsHistory", json!({ "nb": nb, "start": 0 }))
+            .await?;
+        let list = r.get("data").cloned().unwrap_or(r);
+        Ok(models::gw_tracks(&list))
+    }
+
+    /// Report a played Deezer track via `log.listen` so Deezer's listening
+    /// history, Flow recommendations, and Android recently-played stay in sync.
+    pub async fn log_listen(
+        &self,
+        track_id: u64,
+        listened_secs: u64,
+        format: &str,
+        is_shuffle: bool,
+        repeat_mode: u8,
+        context_id: Option<&str>,
+        context_type: Option<&str>,
+    ) -> Result<(), SoneError> {
+        if !self.is_logged_in() {
+            return Ok(());
+        }
+        let mut params = json!({
+            "media": {
+                "id": track_id.to_string(),
+                "type": "song",
+                "format": format,
+            },
+            "type": 0,
+            "stat": { "seek": 0, "pause": 0, "sync": 0 },
+            "lt": listened_secs,
+            "ctxt": {
+                "id": context_id.unwrap_or("0"),
+                "t": context_type.unwrap_or("playlist_page"),
+            },
+            "dev": { "v": "7.1.140", "t": 0 },
+            "ts_listen": crate::now_secs(),
+            "is_shuffle": is_shuffle,
+            "stream_id": uuid::Uuid::new_v4().to_string(),
+        });
+        match repeat_mode {
+            1 => params["repeat_type"] = json!("repeat_all"),
+            2 => params["repeat_type"] = json!("repeat_one"),
+            _ => {}
+        }
+        self.gw("log.listen", json!({ "params": params })).await?;
+        Ok(())
+    }
+
+    // ---- lyrics, credits & library favorites (gw-light) --------------------
+
+    /// Fetch plain + synced LRC lyrics for a Deezer track (`song.getLyrics`).
+    pub async fn lyrics(&self, track_id: u64) -> Result<crate::tidal_api::TidalLyrics, SoneError> {
+        let r = self
+            .gw("song.getLyrics", json!({ "sng_id": track_id.to_string() }))
+            .await?;
+        let lyrics_text = models::text(&r, "LYRICS_TEXT").filter(|s| !s.trim().is_empty());
+        let subtitles = parse_deezer_sync_lyrics(r.get("LYRICS_SYNC_JSON"));
+        if lyrics_text.is_none() && subtitles.is_none() {
+            return Err(SoneError::Api {
+                status: 404,
+                body: format!("No lyrics found for Deezer track {track_id}"),
+            });
+        }
+        let is_rtl = r
+            .get("IS_RIGHT_TO_LEFT")
+            .and_then(|v| v.as_bool().or_else(|| v.as_u64().map(|n| n != 0)))
+            .unwrap_or(false);
+        Ok(crate::tidal_api::TidalLyrics {
+            track_id: Some(track_id),
+            lyrics_provider: models::text(&r, "LYRICS_COPYRIGHTS").or_else(|| Some("Deezer".into())),
+            provider_commontrack_id: None,
+            provider_lyrics_id: models::text(&r, "LYRICS_ID"),
+            lyrics: lyrics_text,
+            subtitles,
+            is_right_to_left: is_rtl,
+        })
+    }
+
+    /// Fetch track credits from `song.getData` (`SNG_CONTRIBUTORS`).
+    pub async fn track_credits(
+        &self,
+        track_id: u64,
+    ) -> Result<Vec<crate::tidal_api::TidalCredit>, SoneError> {
+        let r = self
+            .gw("song.getData", json!({ "sng_id": track_id.to_string() }))
+            .await?;
+        Ok(parse_deezer_contributors(r.get("SNG_CONTRIBUTORS")))
+    }
+
+    pub async fn add_favorite_album(&self, album_id: u64) -> Result<(), SoneError> {
+        self.gw("album.addFavorite", json!({ "ALB_ID": album_id.to_string() }))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_favorite_album(&self, album_id: u64) -> Result<(), SoneError> {
+        self.gw("album.deleteFavorite", json!({ "ALB_ID": album_id.to_string() }))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn add_favorite_artist(&self, artist_id: u64) -> Result<(), SoneError> {
+        self.gw(
+            "artist.addFavorite",
+            json!({ "ART_ID": artist_id.to_string() }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn remove_favorite_artist(&self, artist_id: u64) -> Result<(), SoneError> {
+        self.gw(
+            "artist.deleteFavorite",
+            json!({ "ART_ID": artist_id.to_string() }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn add_favorite_playlist(&self, playlist_id: u64) -> Result<(), SoneError> {
+        self.gw(
+            "playlist.addFavorite",
+            json!({ "PARENT_PLAYLIST_ID": playlist_id.to_string() }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn remove_favorite_playlist(&self, playlist_id: u64) -> Result<(), SoneError> {
+        self.gw(
+            "playlist.deleteFavorite",
+            json!({ "PARENT_PLAYLIST_ID": playlist_id.to_string() }),
+        )
+        .await?;
+        Ok(())
+    }
+
     // ---- streaming ---------------------------------------------------------
 
     /// Best-effort 2048-byte ranged probe to read the FLAC `STREAMINFO` header
@@ -1090,6 +1328,81 @@ impl DeezerClient {
     pub(crate) fn http(&self) -> &Http {
         &self.http
     }
+}
+
+/// Convert Deezer's `LYRICS_SYNC_JSON` array (`[{ "lrc_timestamp": "[00:12.34]", "line": "..." }]`
+/// or `{ "milliseconds": "12340", "line": "..." }`) into standard LRC text for SONE's lyrics parser.
+fn parse_deezer_sync_lyrics(val: Option<&Value>) -> Option<String> {
+    let arr = val?.as_array()?;
+    let mut lines = Vec::new();
+    for entry in arr {
+        let line = entry.get("line").and_then(Value::as_str).unwrap_or("");
+        let ts = if let Some(lrc) = entry
+            .get("lrc_timestamp")
+            .and_then(Value::as_str)
+            .filter(|s| s.starts_with('[') && s.ends_with(']'))
+        {
+            lrc.to_string()
+        } else if let Some(ms) = entry
+            .get("milliseconds")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            })
+        {
+            let mins = ms / 60_000;
+            let secs = (ms % 60_000) / 1_000;
+            let cs = (ms % 1_000) / 10;
+            format!("[{mins:02}:{secs:02}.{cs:02}]")
+        } else {
+            continue;
+        };
+        lines.push(format!("{ts} {line}"));
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// Convert Deezer's `SNG_CONTRIBUTORS` object (`{ "composer": ["Name"], "producer": ["Name"] }`)
+/// into `Vec<TidalCredit>` with title-cased role names.
+fn parse_deezer_contributors(val: Option<&Value>) -> Vec<crate::tidal_api::TidalCredit> {
+    let Some(obj) = val.and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (role, names) in obj {
+        let Some(arr) = names.as_array() else {
+            continue;
+        };
+        let contributors: Vec<crate::tidal_api::TidalContributor> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(str::trim))
+            .filter(|s| !s.is_empty())
+            .map(|name| crate::tidal_api::TidalContributor {
+                name: name.to_string(),
+                id: None,
+            })
+            .collect();
+        if contributors.is_empty() {
+            continue;
+        }
+        let credit_type = role
+            .split('_')
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                let mut chars = w.chars();
+                match chars.next() {
+                    Some(c) => format!("{}{}", c.to_uppercase(), chars.as_str()),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        out.push(crate::tidal_api::TidalCredit {
+            credit_type,
+            contributors,
+        });
+    }
+    out
 }
 
 /// gw-light's song list: `[[id, 0], ...]` (the second value is the song's
@@ -1257,5 +1570,34 @@ mod tests {
         );
 
         assert_eq!(parse_flac_streaminfo(b"ID3notflac"), None);
+    }
+
+    #[test]
+    fn deezer_sync_lyrics_converts_lrc_and_milliseconds() {
+        let sync = json!([
+            { "lrc_timestamp": "[00:05.50]", "line": "First line" },
+            { "milliseconds": "65430", "line": "Second line" },
+            { "line": "No timestamp skipped" }
+        ]);
+        let lrc = parse_deezer_sync_lyrics(Some(&sync)).unwrap();
+        assert_eq!(lrc, "[00:05.50] First line\n[01:05.43] Second line");
+        assert_eq!(parse_deezer_sync_lyrics(None), None);
+    }
+
+    #[test]
+    fn deezer_contributors_maps_roles_to_credits() {
+        let raw = json!({
+            "main_artist": ["Daft Punk"],
+            "composer": ["Thomas Bangalter", "Guy-Manuel de Homem-Christo"],
+            "empty_role": []
+        });
+        let credits = parse_deezer_contributors(Some(&raw));
+        assert_eq!(credits.len(), 2);
+        let composer = credits
+            .iter()
+            .find(|c| c.credit_type == "Composer")
+            .expect("Composer credit");
+        assert_eq!(composer.contributors.len(), 2);
+        assert_eq!(composer.contributors[0].name, "Thomas Bangalter");
     }
 }

@@ -7,13 +7,15 @@ import {
   Share,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useAtom } from "jotai";
 import { useToast } from "../contexts/ToastContext";
 import SourcePlayButton from "./SourcePlayButton";
 import { usePlaySource } from "../hooks/usePlaySource";
 import { useFavorites } from "../hooks/useFavorites";
 import { useNavigation } from "../hooks/useNavigation";
 import { getAlbumPage } from "../api/tidal";
-import { deezerGetAlbum } from "../api/deezer";
+import { deezerGetAlbum, deezerSetFavoriteAlbum } from "../api/deezer";
+import { deezerFavoriteAlbumIdsAtom } from "../atoms/deezer";
 import { getDeezerShareUrl } from "../lib/deezerSources";
 import { getApiStatus, safeErrorMessage } from "../lib/errorUtils";
 import type { PlayableSource } from "../lib/trackSources";
@@ -120,7 +122,12 @@ export default function AlbumView({
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
-  const albumFavorited = !deezer && favoriteAlbumIds.has(albumId);
+  const [deezerFavAlbumIds, setDeezerFavAlbumIds] = useAtom(
+    deezerFavoriteAlbumIdsAtom,
+  );
+  const albumFavorited = deezer
+    ? deezerFavAlbumIds.has(albumId)
+    : favoriteAlbumIds.has(albumId);
 
   useEffect(() => {
     let cancelled = false;
@@ -210,13 +217,28 @@ export default function AlbumView({
 
     setFavoritePending(true);
     try {
-      if (albumFavorited) {
+      if (deezer) {
+        const nextFav = !albumFavorited;
+        await deezerSetFavoriteAlbum(albumId, nextFav);
+        setDeezerFavAlbumIds((prev) => {
+          const next = new Set(prev);
+          if (nextFav) next.add(albumId);
+          else next.delete(albumId);
+          return next;
+        });
+        showToast(
+          nextFav
+            ? "Added album to Deezer favorites"
+            : "Removed album from Deezer favorites",
+        );
+      } else if (albumFavorited) {
         await removeFavoriteAlbum(albumId);
       } else {
         await addFavoriteAlbum(albumId, album ?? undefined);
       }
     } catch (err) {
       console.error("Failed to toggle album favorite:", err);
+      if (deezer) showToast("Failed to update Deezer favorites", "error");
     } finally {
       setFavoritePending(false);
     }
@@ -475,38 +497,36 @@ export default function AlbumView({
               </button>
             </div>
             <div className="flex items-end gap-6 relative">
-              {!deezer && (
-                <button
-                  onClick={handleToggleFavorite}
-                  disabled={favoritePending}
-                  className={`flex flex-col items-center gap-1.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
-                    albumFavorited
-                      ? "text-th-accent hover:brightness-110"
-                      : "text-th-text-muted hover:text-th-text-primary"
-                  }`}
-                  title={
-                    albumFavorited
-                      ? "Remove from favorites"
-                      : "Add to favorites"
-                  }
-                  aria-label={
-                    albumFavorited ? "Unfavorite album" : "Favorite album"
-                  }
-                >
-                  {favoritePending ? (
-                    <Loader2 size={22} className="animate-spin" />
-                  ) : (
-                    <Heart
-                      size={22}
-                      fill={albumFavorited ? "currentColor" : "none"}
-                      strokeWidth={albumFavorited ? 0 : 2}
-                    />
-                  )}
-                  <span className="text-[11px] font-medium">
-                    {albumFavorited ? "Added" : "Add"}
-                  </span>
-                </button>
-              )}
+              <button
+                onClick={handleToggleFavorite}
+                disabled={favoritePending}
+                className={`flex flex-col items-center gap-1.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                  albumFavorited
+                    ? "text-th-accent hover:brightness-110"
+                    : "text-th-text-muted hover:text-th-text-primary"
+                }`}
+                title={
+                  albumFavorited
+                    ? "Remove from favorites"
+                    : "Add to favorites"
+                }
+                aria-label={
+                  albumFavorited ? "Unfavorite album" : "Favorite album"
+                }
+              >
+                {favoritePending ? (
+                  <Loader2 size={22} className="animate-spin" />
+                ) : (
+                  <Heart
+                    size={22}
+                    fill={albumFavorited ? "currentColor" : "none"}
+                    strokeWidth={albumFavorited ? 0 : 2}
+                  />
+                )}
+                <span className="text-[11px] font-medium">
+                  {albumFavorited ? "Added" : "Add"}
+                </span>
+              </button>
 
               <button
                 onClick={handleShare}

@@ -46,6 +46,7 @@ import SignalPathPanel from "./SignalPathPanel";
 import { getTrackArtistDisplay } from "../utils/itemHelpers";
 import VolumeSlider from "./VolumeSlider";
 import { getTrackLyrics } from "../api/tidal";
+import { deezerGetLyrics } from "../api/deezer";
 import { parseLrc, type LrcLine } from "../lib/lrc";
 import { isDeezer } from "../lib/provider";
 import { themeAtom } from "../atoms/theme";
@@ -564,13 +565,11 @@ const MaximizedLyrics = memo(function MaximizedLyrics({
     setProvider(null);
     setIsRtl(false);
 
-    // Lyrics come from TIDAL; a Deezer id would fetch some other song's.
-    if (isDeezer(currentTrack)) {
-      setLoading(false);
-      return;
-    }
+    const fetchLyrics = isDeezer(currentTrack)
+      ? deezerGetLyrics(currentTrack.id)
+      : getTrackLyrics(currentTrack.id);
 
-    getTrackLyrics(currentTrack.id)
+    fetchLyrics
       .then((result) => {
         if (!active) return;
         setProvider(result.lyricsProvider ?? null);

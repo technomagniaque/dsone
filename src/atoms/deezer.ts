@@ -20,6 +20,31 @@ export const deezerAuthCheckingAtom = atom(true);
 /** Deezer favourite ("Coups de cœur") track ids — separate from TIDAL ids,
  *  since the two id spaces overlap. */
 export const deezerFavoriteTrackIdsAtom = atom<Set<number>>(new Set<number>());
+export const deezerFavoriteAlbumIdsAtom = atom<Set<number>>(new Set<number>());
+export const deezerFavoriteArtistIdsAtom = atom<Set<number>>(new Set<number>());
+export const deezerFavoritePlaylistIdsAtom = atom<Set<string>>(
+  new Set<string>(),
+);
+/** Sync active Deezer play queue & current track with other Deezer clients
+ *  (Android / iOS / Web / Desktop) via Deezer Cloud Queue. Enabled by default. */
+export const deezerCloudQueueSyncAtom = atomWithStorage<boolean>(
+  "sone.deezer-cloud-queue-sync.v1",
+  true,
+);
+export interface DeezerQueueSyncStatus {
+  version: string | null;
+  localQueueId: string | null;
+  lastSyncedAt: number | null;
+  syncing: boolean;
+  lastSource: string | null;
+}
+export const deezerQueueSyncStatusAtom = atom<DeezerQueueSyncStatus>({
+  version: null,
+  localQueueId: null,
+  lastSyncedAt: null,
+  syncing: false,
+  lastSource: null,
+});
 /** Progress of the browser sign-in (Deezer's page → deezer://autolog link). */
 export type DeezerBrowserLogin =
   | { state: "idle" }
