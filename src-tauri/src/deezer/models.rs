@@ -140,6 +140,9 @@ pub struct DzArtistPage {
     pub artist: DzArtist,
     pub top_tracks: Vec<DzTrack>,
     pub albums: Vec<DzAlbumDetail>,
+    pub related_artists: Vec<DzArtist>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -410,7 +413,7 @@ pub fn public_playlist(v: &Value) -> Option<DzPlaylist> {
 // gw-light (www.deezer.com/ajax/gw-light.php)
 // ---------------------------------------------------------------------------
 
-fn gw_artist(v: &Value) -> Option<DzArtist> {
+pub fn gw_artist(v: &Value) -> Option<DzArtist> {
     Some(DzArtist {
         id: num(v, "ART_ID")?,
         name: text(v, "ART_NAME")?,

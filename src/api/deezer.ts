@@ -14,6 +14,8 @@ export interface DeezerArtistPage {
   artist: DeezerArtist;
   topTracks: Track[];
   albums: AlbumDetail[];
+  relatedArtists?: DeezerArtist[];
+  bio?: string;
 }
 
 // The backend tags every item with `provider: "deezer"`. Re-tagging here costs
@@ -76,6 +78,8 @@ export async function deezerGetArtist(
     artist: tag(r.artist),
     topTracks: tagAll(r.topTracks),
     albums: tagAll(r.albums),
+    relatedArtists: tagAll(r.relatedArtists),
+    bio: r.bio,
   };
 }
 
@@ -109,11 +113,59 @@ export const deezerCreatePlaylist = (
     trackIds,
   });
 
+export const deezerRemoveTracksFromPlaylist = (
+  playlistId: number,
+  trackIds: number[],
+) =>
+  invoke<null>("deezer_remove_tracks_from_playlist", {
+    playlistId,
+    trackIds,
+  });
+
+export const deezerDeletePlaylist = (playlistId: number) =>
+  invoke<null>("deezer_delete_playlist", { playlistId });
+
+export const deezerUpdatePlaylist = (
+  playlistId: number,
+  title: string,
+  description: string,
+  isPublic: boolean,
+) =>
+  invoke<null>("deezer_update_playlist", {
+    playlistId,
+    title,
+    description,
+    isPublic,
+  });
+
+export const deezerReorderPlaylist = (playlistId: number, trackIds: number[]) =>
+  invoke<null>("deezer_reorder_playlist", { playlistId, trackIds });
+
 export const deezerGetUserAlbums = async () =>
   tagAll(await invoke<AlbumDetail[]>("deezer_get_user_albums"));
 
+export const deezerGetUserArtists = async () =>
+  tagAll(await invoke<DeezerArtist[]>("deezer_get_user_artists"));
+
+export async function deezerGetCharts(limit?: number): Promise<SearchResults> {
+  const r = await invoke<SearchResults>("deezer_get_charts", { limit });
+  return {
+    artists: tagAll(r.artists),
+    albums: tagAll(r.albums),
+    tracks: tagAll(r.tracks),
+    playlists: tagAll(r.playlists),
+    videos: [],
+  };
+}
+
 export const deezerGetFlow = async () =>
   tagAll(await invoke<Track[]>("deezer_get_flow"));
+
+export const deezerGetTrackMix = async (trackId: number) =>
+  tagAll(await invoke<Track[]>("deezer_get_track_mix", { trackId }));
+
+export const deezerGetArtistRadio = async (artistId: number) =>
+  tagAll(await invoke<Track[]>("deezer_get_artist_radio", { artistId }));
 
 export const deezerSetFavoriteTrack = (trackId: number, favorite: boolean) =>
   invoke<null>("deezer_set_favorite_track", { trackId, favorite });

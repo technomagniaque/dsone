@@ -27,7 +27,7 @@ use axum::routing::get;
 use axum::Router;
 
 use super::crypto::{track_key, StripeDecryptor, CHUNK_SIZE};
-use super::{DeezerClient, Quality, ResolvedStream};
+use super::{parse_flac_streaminfo, DeezerClient, Quality, ResolvedStream};
 use crate::SoneError;
 
 /// A stream is read at playback speed, so the shared client's 30 s total
@@ -360,6 +360,8 @@ async fn serve(
         dec: StripeDecryptor::new(track_key(src.key_id), body_offset / CHUNK_SIZE as u64),
         skip: start - body_offset,
         remaining: end + 1 - start,
+        flac_probe: (body_offset == 0 && src.format == Quality::Flac && src.bit_depth.is_none())
+            .then(|| (Arc::clone(&ctx.client), track_id)),
     };
     let stream = futures_util::stream::unfold(state, next_piece);
     ranged_head(src.format, spec.is_some(), start, end, total)
@@ -372,6 +374,7 @@ struct BodyState {
     dec: StripeDecryptor,
     skip: u64,
     remaining: u64,
+    flac_probe: Option<(Arc<DeezerClient>, u64)>,
 }
 
 async fn next_piece(mut st: BodyState) -> Option<(Result<Bytes, std::io::Error>, BodyState)> {
@@ -392,6 +395,13 @@ async fn next_piece(mut st: BodyState) -> Option<(Result<Bytes, std::io::Error>,
                 return Some((Err(std::io::Error::other(e)), st));
             }
         };
+        if !produced.is_empty() {
+            if let Some((client, track_id)) = st.flac_probe.take() {
+                if let Some(info) = parse_flac_streaminfo(&produced) {
+                    client.record_flac_streaminfo(track_id, info);
+                }
+            }
+        }
         let out = window(&produced, &mut st.skip, &mut st.remaining);
         if !out.is_empty() {
             return Some((Ok(Bytes::from(out)), st));
@@ -568,6 +578,9 @@ mod tests {
             format: Quality::Flac,
             size: Some(total as u64),
             gain: None,
+            bit_depth: None,
+            sample_rate: None,
+            channels: None,
             resolved_at: std::time::Instant::now(),
         });
         let url = client.loopback_url(id, Quality::Flac).await.unwrap();

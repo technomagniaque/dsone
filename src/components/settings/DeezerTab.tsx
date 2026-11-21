@@ -18,7 +18,11 @@ const DEEZER_TIERS: readonly {
   label: string;
   spec: string;
 }[] = [
-  { id: "FLAC", label: "Lossless", spec: "FLAC · 16-bit / 44.1 kHz" },
+  {
+    id: "FLAC",
+    label: "Hi-Fi / Hi-Res Lossless",
+    spec: "FLAC · 16-bit / 44.1 kHz up to 24-bit / 192 kHz",
+  },
   { id: "MP3_320", label: "High", spec: "MP3 · 320 kbps" },
   { id: "MP3_128", label: "Standard", spec: "MP3 · 128 kbps" },
 ];
@@ -63,7 +67,7 @@ export default function DeezerTab() {
   }
 
   const plan = user.canStreamLossless
-    ? "Lossless streaming available"
+    ? "Hi-Fi Lossless (up to 24-bit / 192 kHz)"
     : user.canStreamHq
       ? "Up to MP3 320 kbps on this plan"
       : "MP3 128 kbps on this plan";
@@ -110,8 +114,10 @@ export default function DeezerTab() {
       <p className={`${sectionLabel} mt-6`}>Audio quality</p>
       <TierPicker tiers={DEEZER_TIERS} value={quality} onSelect={pick} />
       <p className="text-[11px] text-th-text-muted mt-2.5">
-        Quality requested from Deezer. When a track or your plan doesn't offer
-        it, playback steps down to the next tier and lets you know.
+        Deezer Hi-Fi delivers lossless FLAC from 16-bit / 44.1 kHz up to 24-bit
+        / 192 kHz depending on the available master (recommended connection: ≥ 5
+        Mb/s). When a track or your plan doesn&apos;t offer the selected tier,
+        playback steps down to the next tier and lets you know.
       </p>
     </div>
   );

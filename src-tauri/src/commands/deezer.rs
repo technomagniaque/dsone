@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 
 use super::playback::compute_norm_gain;
 use crate::deezer::models::{
-    DeezerUser, DzAlbumDetail, DzAlbumPage, DzArtistPage, DzPlaylist, DzPlaylistPage,
+    DeezerUser, DzAlbumDetail, DzAlbumPage, DzArtist, DzArtistPage, DzPlaylist, DzPlaylistPage,
     DzSearchResults, DzTrack,
 };
 use crate::deezer::{Quality, ResolvedStream};
@@ -146,6 +146,56 @@ pub async fn deezer_create_playlist(
         .await
 }
 
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_remove_tracks_from_playlist(
+    state: State<'_, AppState>,
+    playlist_id: u64,
+    track_ids: Vec<u64>,
+) -> Result<(), SoneError> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    state
+        .deezer
+        .remove_from_playlist(playlist_id, &track_ids)
+        .await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_delete_playlist(
+    state: State<'_, AppState>,
+    playlist_id: u64,
+) -> Result<(), SoneError> {
+    state.deezer.delete_playlist(playlist_id).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_update_playlist(
+    state: State<'_, AppState>,
+    playlist_id: u64,
+    title: String,
+    description: String,
+    is_public: bool,
+) -> Result<(), SoneError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(SoneError::Parse("playlist title is empty".into()));
+    }
+    state
+        .deezer
+        .update_playlist(playlist_id, title, description.trim(), is_public)
+        .await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_reorder_playlist(
+    state: State<'_, AppState>,
+    playlist_id: u64,
+    track_ids: Vec<u64>,
+) -> Result<(), SoneError> {
+    state.deezer.reorder_playlist(playlist_id, &track_ids).await
+}
+
 #[tauri::command]
 pub async fn deezer_restore_session(
     state: State<'_, AppState>,
@@ -215,8 +265,40 @@ pub async fn deezer_get_user_albums(
 }
 
 #[tauri::command]
+pub async fn deezer_get_user_artists(
+    state: State<'_, AppState>,
+) -> Result<Vec<DzArtist>, SoneError> {
+    state.deezer.user_artists().await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_get_charts(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<DzSearchResults, SoneError> {
+    let limit = limit.unwrap_or(20).clamp(1, 100);
+    state.deezer.charts(limit).await
+}
+
+#[tauri::command]
 pub async fn deezer_get_flow(state: State<'_, AppState>) -> Result<Vec<DzTrack>, SoneError> {
     state.deezer.flow().await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_get_track_mix(
+    state: State<'_, AppState>,
+    track_id: u64,
+) -> Result<Vec<DzTrack>, SoneError> {
+    state.deezer.track_mix(track_id).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_get_artist_radio(
+    state: State<'_, AppState>,
+    artist_id: u64,
+) -> Result<Vec<DzTrack>, SoneError> {
+    state.deezer.artist_radio(artist_id).await
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -256,20 +338,31 @@ struct QualityFallback {
     actual: &'static str,
 }
 
-/// StreamInfo for a Deezer stream (contract: FLAC is 16/44.1; MP3 has no
-/// bit depth). Deezer exposes one loudness value (`GAIN`), used as track
-/// replay gain; there is no album gain or peak.
+/// StreamInfo for a Deezer stream. FLAC streams read their actual bit depth
+/// and sample rate (16-bit/44.1 kHz up to 24-bit/192 kHz) from the leading
+/// `STREAMINFO` block; 24-bit or >48 kHz masters report `HI_RES_LOSSLESS`.
+/// Deezer exposes one loudness value (`GAIN`), used as track replay gain;
+/// there is no album gain or peak.
 fn stream_info(r: &ResolvedStream, uri: &str) -> StreamInfo {
-    let (codec, bit_depth, quality) = match r.format {
-        Quality::Flac => ("FLAC", Some(16), "LOSSLESS"),
-        Quality::Mp3_320 => ("MP3", None, "HIGH"),
-        Quality::Mp3_128 => ("MP3", None, "LOW"),
+    let (codec, bit_depth, sample_rate, quality) = match r.format {
+        Quality::Flac => {
+            let bd = r.bit_depth.unwrap_or(16);
+            let sr = r.sample_rate.unwrap_or(44_100);
+            let q = if bd > 16 || sr > 48_000 {
+                "HI_RES_LOSSLESS"
+            } else {
+                "LOSSLESS"
+            };
+            ("FLAC", Some(bd), Some(sr), q)
+        }
+        Quality::Mp3_320 => ("MP3", None, Some(44_100), "HIGH"),
+        Quality::Mp3_128 => ("MP3", None, Some(44_100), "LOW"),
     };
     StreamInfo {
         url: uri.to_string(),
         codec: Some(codec.to_string()),
         bit_depth,
-        sample_rate: Some(44_100),
+        sample_rate,
         audio_quality: Some(quality.to_string()),
         audio_mode: Some("STEREO".to_string()),
         asset_presentation: Some("FULL".to_string()),

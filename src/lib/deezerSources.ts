@@ -1,11 +1,13 @@
 import {
   deezerGetAlbum,
   deezerGetArtist,
+  deezerGetArtistRadio,
   deezerGetFavoriteTracks,
   deezerGetFlow,
   deezerGetPlaylist,
+  deezerGetTrackMix,
 } from "../api/deezer";
-import type { AppView } from "../types";
+import type { AppView, Track } from "../types";
 import type { PlayableSource } from "./trackSources";
 
 /** Playback-source `type`s for Deezer containers. Distinct from the TIDAL
@@ -127,6 +129,50 @@ export async function deezerFlowPlayable(): Promise<PlayableSource> {
   return {
     meta: { type: "deezer-flow", id: "deezer-flow", name: "Flow" },
     loaded: await deezerGetFlow(),
+  };
+}
+
+/** Track radio / mix seeded from a Deezer track (`song.getSearchTrackMix`),
+ *  with the seed track placed first when not already in the mix. */
+export async function deezerTrackMixPlayable(
+  track: Track,
+): Promise<PlayableSource> {
+  const mix = await deezerGetTrackMix(track.id);
+  const rest = mix.filter((t) => t.id !== track.id);
+  const loaded = [track, ...rest];
+  return {
+    meta: track.artist?.id
+      ? {
+          type: "deezer-artist",
+          id: track.artist.id,
+          name: `${track.title} Radio`,
+          image: track.album?.cover,
+        }
+      : {
+          type: "deezer-track-radio",
+          id: track.id,
+          name: `${track.title} Radio`,
+          image: track.album?.cover,
+        },
+    loaded,
+  };
+}
+
+/** Artist radio seeded from a Deezer artist (`smart.getSmartRadio`). */
+export async function deezerArtistRadioPlayable(
+  artistId: number,
+  name: string,
+  image?: string,
+): Promise<PlayableSource> {
+  const tracks = await deezerGetArtistRadio(artistId);
+  return {
+    meta: {
+      type: "deezer-artist",
+      id: artistId,
+      name: `${name} Radio`,
+      image,
+    },
+    loaded: tracks,
   };
 }
 

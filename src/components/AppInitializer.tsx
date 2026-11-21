@@ -1082,7 +1082,45 @@ export function AppInitializer() {
   useEffect(() => {
     // Attach listener FIRST so any event during initial fetch isn't lost.
     const unlisten = listen<SignalPath>("signal-path-changed", (e) => {
-      store.set(signalPathAtom, e.payload);
+      const sp = e.payload;
+      store.set(signalPathAtom, sp);
+      // For Deezer FLAC streams, reconcile StreamInfo with GStreamer's actual
+      // decoded bit depth & sample rate (16-bit/44.1 kHz up to 24-bit/192 kHz)
+      // in case the ranged STREAMINFO probe timed out or a gapless transition
+      // adopted a placeholder StreamInfo.
+      const track = store.get(currentTrackAtom);
+      const info = store.get(streamInfoAtom);
+      if (
+        isDeezer(track) &&
+        info &&
+        (info.codec === "FLAC" || !info.codec) &&
+        sp.decodedRate &&
+        sp.decodedFormat
+      ) {
+        const fmt = sp.decodedFormat.toUpperCase();
+        if (fmt.startsWith("S16") || fmt.startsWith("S24")) {
+          const bitDepth = fmt.startsWith("S24") ? 24 : 16;
+          const sampleRate = sp.decodedRate;
+          const audioQuality =
+            bitDepth > 16 || sampleRate > 48000
+              ? "HI_RES_LOSSLESS"
+              : "LOSSLESS";
+          if (
+            info.bitDepth !== bitDepth ||
+            info.sampleRate !== sampleRate ||
+            info.audioQuality !== audioQuality ||
+            info.codec !== "FLAC"
+          ) {
+            store.set(streamInfoAtom, {
+              ...info,
+              codec: "FLAC",
+              bitDepth,
+              sampleRate,
+              audioQuality,
+            });
+          }
+        }
+      }
     });
     // Initial fetch uses the new refresh command (which probes ground truth)
     // and only writes if no event has already populated the atom.

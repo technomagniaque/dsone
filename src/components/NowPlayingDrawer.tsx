@@ -62,6 +62,7 @@ import {
   getTrackCredits,
   getArtistBio,
 } from "../api/tidal";
+import { deezerGetTrackMix } from "../api/deezer";
 import BioText from "./BioText";
 import { isTrackUnavailable } from "../lib/trackAvailability";
 import { COVER_TEXT_GAP, MAX_COVER_SIZE } from "../lib/coverFit";
@@ -803,7 +804,7 @@ function SuggestedTrackRow({
 const SuggestedTab = memo(function SuggestedTab() {
   const currentTrack = useAtomValue(currentTrackAtom);
   const { playTrack, addToQueue } = usePlaybackActions();
-  const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } =
+  const { isTrackFavorite, addFavoriteTrack, removeFavoriteTrack } =
     useFavorites();
   const { navigateToArtist, navigateToAlbum } = useNavigation();
   const { showToast } = useToast();
@@ -818,6 +819,22 @@ const SuggestedTab = memo(function SuggestedTab() {
     let active = true;
     setLoading(true);
     setError(null);
+
+    if (isDeezer(currentTrack)) {
+      deezerGetTrackMix(currentTrack.id)
+        .then((mix) => {
+          if (active) setTracks(mix.filter((t) => t.id !== currentTrack.id));
+        })
+        .catch((err) => {
+          if (active) setError(String(err));
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+      return () => {
+        active = false;
+      };
+    }
 
     const trackMixId = currentTrack.mixes?.TRACK_MIX;
     if (trackMixId) {
@@ -839,14 +856,16 @@ const SuggestedTab = memo(function SuggestedTab() {
     return () => {
       active = false;
     };
-  }, [currentTrack?.id]);
+  }, [currentTrack?.id, currentTrack?.provider]);
 
   // Stable callbacks passed to every row — hooks called once here, not per row
   const handleAddToQueue = useCallback(
     (track: Track) => {
       const trackSource = track.album
         ? {
-            type: "album" as const,
+            type: isDeezer(track)
+              ? ("deezer-album" as const)
+              : ("album" as const),
             id: track.album.id,
             name: track.album.title,
             image: track.album.cover,
@@ -867,7 +886,7 @@ const SuggestedTab = memo(function SuggestedTab() {
     async (trackId: number, currentlyFav: boolean, track?: Track) => {
       try {
         if (currentlyFav) {
-          await removeFavoriteTrack(trackId);
+          await removeFavoriteTrack(trackId, track);
           showToast("Removed from Loved tracks");
         } else {
           await addFavoriteTrack(trackId, track);
@@ -881,12 +900,16 @@ const SuggestedTab = memo(function SuggestedTab() {
   );
 
   const handleArtistClick = useCallback(
-    (artist: ArtistInfo) => {
+    (artist: ArtistInfo, provider?: Track["provider"]) => {
       if (artist.id) {
-        navigateToArtist(artist.id, {
-          name: artist.name,
-          picture: artist.picture,
-        });
+        navigateToArtist(
+          artist.id,
+          {
+            name: artist.name,
+            picture: artist.picture,
+          },
+          provider,
+        );
       }
     },
     [navigateToArtist],
@@ -895,11 +918,15 @@ const SuggestedTab = memo(function SuggestedTab() {
   const handleAlbumClick = useCallback(
     (track: Track) => {
       if (track.album?.id) {
-        navigateToAlbum(track.album.id, {
-          title: track.album.title,
-          cover: track.album.cover,
-          artistName: track.artist?.name,
-        });
+        navigateToAlbum(
+          track.album.id,
+          {
+            title: track.album.title,
+            cover: track.album.cover,
+            artistName: track.artist?.name,
+          },
+          track.provider,
+        );
       }
     },
     [navigateToAlbum],
@@ -946,13 +973,16 @@ const SuggestedTab = memo(function SuggestedTab() {
         <SuggestedTrackRow
           key={`sug-${track.id}-${i}`}
           track={track}
-          isActive={currentTrack?.id === track.id}
+          isActive={
+            currentTrack?.id === track.id &&
+            isDeezer(currentTrack) === isDeezer(track)
+          }
           index={i}
-          isFav={favoriteTrackIds.has(track.id)}
+          isFav={isTrackFavorite(track)}
           onPlay={playTrack}
           onAddToQueue={handleAddToQueue}
           onToggleFavorite={handleToggleFavorite}
-          onArtistClick={handleArtistClick}
+          onArtistClick={(artist) => handleArtistClick(artist, track.provider)}
           onAlbumClick={handleAlbumClick}
         />
       ))}

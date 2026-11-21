@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
-import { useAtomValue } from "jotai";
-import { Play } from "lucide-react";
-import { deezerUserAtom } from "../../atoms/deezer";
-import { deezerGetUserAlbums, deezerGetUserPlaylists } from "../../api/deezer";
+import { useAtomValue, useSetAtom } from "jotai";
+import { Play, Plus, User } from "lucide-react";
+import { deezerPlaylistsVersionAtom, deezerUserAtom } from "../../atoms/deezer";
+import {
+  deezerGetCharts,
+  deezerGetUserAlbums,
+  deezerGetUserArtists,
+  deezerGetUserPlaylists,
+  type DeezerArtist,
+} from "../../api/deezer";
 import { useNavigation } from "../../hooks/useNavigation";
 import { usePlaySource } from "../../hooks/usePlaySource";
 import { useDeezerMediaPlay } from "../../hooks/useDeezerMediaPlay";
@@ -12,10 +18,13 @@ import {
   deezerFlowPlayable,
 } from "../../lib/deezerSources";
 import type { PlayableSource } from "../../lib/trackSources";
-import type { AlbumDetail, Playlist } from "../../types";
+import type { AlbumDetail, Playlist, SearchResults } from "../../types";
+import { CreatePlaylistModal } from "../AddToPlaylistMenu";
 import MediaCard from "../MediaCard";
 import MediaGrid, { MediaGridSkeleton } from "../MediaGrid";
 import PageContainer from "../PageContainer";
+import TidalImage from "../TidalImage";
+import TrackList from "../TrackList";
 import { DeezerCollectionTile } from "./DeezerTracksView";
 
 function greeting(): string {
@@ -26,15 +35,21 @@ function greeting(): string {
   return "Good evening";
 }
 
-/** Deezer home: Flow, Loved Tracks, the user's playlists and albums. */
+/** Deezer home: Flow, Loved Tracks, the user's playlists, albums, artists, and Deezer Charts. */
 export default function DeezerHome() {
   const user = useAtomValue(deezerUserAtom);
-  const { navigateTo, navigateToPlaylist, navigateToAlbum } = useNavigation();
+  const playlistsVersion = useAtomValue(deezerPlaylistsVersionAtom);
+  const bumpPlaylists = useSetAtom(deezerPlaylistsVersionAtom);
+  const { navigateTo, navigateToPlaylist, navigateToAlbum, navigateToArtist } =
+    useNavigation();
   const playSource = usePlaySource();
   const playDeezerMedia = useDeezerMediaPlay();
   const { showToast } = useToast();
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
   const [albums, setAlbums] = useState<AlbumDetail[] | null>(null);
+  const [artists, setArtists] = useState<DeezerArtist[] | null>(null);
+  const [charts, setCharts] = useState<SearchResults | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,11 +59,29 @@ export default function DeezerHome() {
         console.error("Failed to load Deezer playlists:", err);
         if (!cancelled) setPlaylists([]);
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [playlistsVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
     deezerGetUserAlbums()
       .then((a) => !cancelled && setAlbums(a))
       .catch((err) => {
         console.error("Failed to load Deezer albums:", err);
         if (!cancelled) setAlbums([]);
+      });
+    deezerGetUserArtists()
+      .then((a) => !cancelled && setArtists(a))
+      .catch((err) => {
+        console.error("Failed to load Deezer artists:", err);
+        if (!cancelled) setArtists([]);
+      });
+    deezerGetCharts(12)
+      .then((c) => !cancelled && setCharts(c))
+      .catch((err) => {
+        console.error("Failed to load Deezer charts:", err);
       });
     return () => {
       cancelled = true;
@@ -126,9 +159,18 @@ export default function DeezerHome() {
         </div>
 
         <section className="mb-10">
-          <h2 className="text-[20px] font-bold text-th-text-primary mb-3">
-            Your playlists
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[20px] font-bold text-th-text-primary">
+              Your playlists
+            </h2>
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-th-elevated hover:bg-th-surface-hover border border-th-border-subtle text-xs font-semibold text-th-text-primary transition-colors"
+            >
+              <Plus size={14} />
+              New playlist
+            </button>
+          </div>
           {playlists === null ? (
             <MediaGridSkeleton count={6} />
           ) : playlists.length === 0 ? (
@@ -204,6 +246,185 @@ export default function DeezerHome() {
             </MediaGrid>
           )}
         </section>
+
+        {artists && artists.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-[20px] font-bold text-th-text-primary mb-3">
+              Your artists
+            </h2>
+            <MediaGrid>
+              {artists.map((artist) => (
+                <div
+                  key={artist.id}
+                  onClick={() =>
+                    navigateToArtist(
+                      artist.id,
+                      { name: artist.name, picture: artist.picture },
+                      "deezer",
+                    )
+                  }
+                  className="group bg-th-elevated/40 hover:bg-th-surface-hover p-4 rounded-xl cursor-pointer transition-all duration-300 flex flex-col items-center text-center"
+                >
+                  <div className="w-full aspect-square mb-3.5 relative rounded-full overflow-hidden bg-th-surface shadow-lg flex items-center justify-center">
+                    {artist.picture ? (
+                      <TidalImage
+                        src={artist.picture}
+                        alt={artist.name}
+                        type="artist"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                    ) : (
+                      <User size={40} className="text-th-text-faint" />
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void playDeezerMedia(
+                          "artist",
+                          artist.id,
+                          artist.name,
+                          artist.picture,
+                        );
+                      }}
+                      aria-label={`Play ${artist.name}`}
+                      className="absolute bottom-2 right-2 w-10 h-10 bg-th-accent rounded-full flex items-center justify-center shadow-xl opacity-0 group-hover:opacity-100 transition-opacity hover:brightness-110"
+                    >
+                      <Play
+                        size={18}
+                        fill="currentColor"
+                        className="text-th-on-accent ml-0.5"
+                      />
+                    </button>
+                  </div>
+                  <p className="text-[14px] font-bold text-th-text-primary truncate w-full">
+                    {artist.name}
+                  </p>
+                  <p className="text-[12px] text-th-text-muted mt-0.5">
+                    Artist
+                  </p>
+                </div>
+              ))}
+            </MediaGrid>
+          </section>
+        )}
+
+        {charts && charts.tracks.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-[20px] font-bold text-th-text-primary mb-3">
+              Deezer Top Tracks
+            </h2>
+            <TrackList
+              tracks={charts.tracks.slice(0, 10)}
+              onPlay={(track) =>
+                void playSource(
+                  {
+                    meta: {
+                      type: "deezer-charts",
+                      id: "deezer-charts",
+                      name: "Deezer Top Tracks",
+                    },
+                    loaded: charts.tracks,
+                  },
+                  { startAt: track },
+                )
+              }
+              showDateAdded={false}
+              showArtist={true}
+              showAlbum={true}
+              showCover={true}
+              context="playlist"
+            />
+          </section>
+        )}
+
+        {charts && charts.playlists.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-[20px] font-bold text-th-text-primary mb-3">
+              Top Deezer Playlists
+            </h2>
+            <MediaGrid>
+              {charts.playlists.map((pl) => (
+                <MediaCard
+                  key={pl.uuid}
+                  item={pl}
+                  onClick={() =>
+                    navigateToPlaylist(
+                      pl.uuid,
+                      {
+                        title: pl.title,
+                        image: pl.squareImage || pl.image,
+                        description: pl.description,
+                      },
+                      "deezer",
+                    )
+                  }
+                  onPlay={(e) => {
+                    e.stopPropagation();
+                    void playDeezerMedia(
+                      "playlist",
+                      pl.uuid,
+                      pl.title,
+                      pl.squareImage || pl.image,
+                    );
+                  }}
+                />
+              ))}
+            </MediaGrid>
+          </section>
+        )}
+
+        {charts && charts.albums.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-[20px] font-bold text-th-text-primary mb-3">
+              Top Deezer Albums
+            </h2>
+            <MediaGrid>
+              {charts.albums.map((album) => (
+                <MediaCard
+                  key={album.id}
+                  item={album}
+                  onClick={() =>
+                    navigateToAlbum(
+                      album.id,
+                      {
+                        title: album.title,
+                        cover: album.cover,
+                        artistName: album.artist?.name,
+                      },
+                      "deezer",
+                    )
+                  }
+                  onPlay={(e) => {
+                    e.stopPropagation();
+                    void playDeezerMedia(
+                      "album",
+                      album.id,
+                      album.title,
+                      album.cover,
+                    );
+                  }}
+                />
+              ))}
+            </MediaGrid>
+          </section>
+        )}
+
+        {createOpen && (
+          <CreatePlaylistModal
+            trackIds={[]}
+            provider="deezer"
+            onClose={() => setCreateOpen(false)}
+            onCreated={(pl) => {
+              setCreateOpen(false);
+              bumpPlaylists((v) => v + 1);
+              navigateToPlaylist(
+                pl.uuid,
+                { title: pl.title, description: pl.description },
+                "deezer",
+              );
+            }}
+          />
+        )}
       </PageContainer>
     </div>
   );

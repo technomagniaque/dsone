@@ -18,7 +18,7 @@ use crate::proxy_http::ProxiedHttp;
 use crate::SoneError;
 use api::{GwError, Http, MediaAnswer};
 use models::{
-    DeezerUser, DzAlbumDetail, DzAlbumPage, DzArtistPage, DzPlaylist, DzPlaylistPage,
+    DeezerUser, DzAlbumDetail, DzAlbumPage, DzArtist, DzArtistPage, DzPlaylist, DzPlaylistPage,
     DzSearchResults, DzTrack,
 };
 
@@ -178,6 +178,45 @@ impl SongSource {
     }
 }
 
+/// Stream parameters parsed from a FLAC file's leading `STREAMINFO` block
+/// (RFC 9639 §8.2, first 42 bytes of the decrypted file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlacStreamInfo {
+    pub sample_rate: u32,
+    pub channels: u32,
+    pub bit_depth: u32,
+}
+
+/// Parse `STREAMINFO` from the first ≥42 plaintext bytes of a FLAC stream.
+/// Deezer Hi-Fi delivers FLAC masters from 16-bit / 44.1 kHz up to
+/// 24-bit / 192 kHz under the `FLAC` format identifier.
+pub fn parse_flac_streaminfo(plain: &[u8]) -> Option<FlacStreamInfo> {
+    if plain.len() < 42 || &plain[0..4] != b"fLaC" {
+        return None;
+    }
+    let block_type = plain[4] & 0x7F;
+    let block_len =
+        ((plain[5] as usize) << 16) | ((plain[6] as usize) << 8) | (plain[7] as usize);
+    if block_type != 0 || block_len < 34 {
+        return None;
+    }
+    let b18 = plain[18] as u32;
+    let b19 = plain[19] as u32;
+    let b20 = plain[20] as u32;
+    let b21 = plain[21] as u32;
+    let sample_rate = (b18 << 12) | (b19 << 4) | (b20 >> 4);
+    let channels = ((b20 >> 1) & 0x07) + 1;
+    let bit_depth = (((b20 & 0x01) << 4) | (b21 >> 4)) + 1;
+    if !(8_000..=768_000).contains(&sample_rate) || !(8..=32).contains(&bit_depth) {
+        return None;
+    }
+    Some(FlacStreamInfo {
+        sample_rate,
+        channels,
+        bit_depth,
+    })
+}
+
 /// A CDN URL ready to be served by the loopback server.
 #[derive(Debug, Clone)]
 pub struct ResolvedStream {
@@ -190,6 +229,10 @@ pub struct ResolvedStream {
     pub format: Quality,
     pub size: Option<u64>,
     pub gain: Option<f64>,
+    /// Probed from FLAC `STREAMINFO` (16-bit vs 24-bit, 44.1..192 kHz).
+    pub bit_depth: Option<u32>,
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u32>,
     pub resolved_at: Instant,
 }
 
@@ -537,16 +580,19 @@ impl DeezerClient {
     }
 
     pub async fn artist(&self, artist_id: u64) -> Result<DzArtistPage, SoneError> {
-        let (p_artist, p_top, p_albums) = (
+        let (p_artist, p_top, p_albums, p_related) = (
             format!("artist/{artist_id}"),
             format!("artist/{artist_id}/top"),
             format!("artist/{artist_id}/albums"),
+            format!("artist/{artist_id}/related"),
         );
-        let top_query = [("limit", "25".to_string())];
-        let (raw, top, albums) = tokio::join!(
+        let top_query = [("limit", "50".to_string())];
+        let rel_query = [("limit", "20".to_string())];
+        let (raw, top, albums, related) = tokio::join!(
             api::public_get(&self.http, &p_artist, &[]),
             api::public_get(&self.http, &p_top, &top_query),
             api::public_get_all(&self.http, &p_albums, 300),
+            api::public_get(&self.http, &p_related, &rel_query),
         );
         let artist = models::public_artist(&raw?)
             .ok_or_else(|| SoneError::Parse(format!("deezer artist {artist_id}")))?;
@@ -563,10 +609,72 @@ impl DeezerClient {
                 Some(a)
             })
             .collect();
+        let related_artists: Vec<DzArtist> = related
+            .ok()
+            .and_then(|v| v.get("data").and_then(|d| d.as_array()).cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(models::public_artist)
+            .collect();
+        let bio = if self.is_logged_in() {
+            self.gw(
+                "deezer.pageArtist",
+                json!({ "art_id": artist_id.to_string(), "lang": "en", "tab": 0 }),
+            )
+            .await
+            .ok()
+            .and_then(|r| {
+                r.get("BIO")
+                    .and_then(|b| models::text(b, "BIO"))
+                    .or_else(|| models::text(&r, "BIO"))
+            })
+        } else {
+            None
+        };
         Ok(DzArtistPage {
             top_tracks: models::public_tracks(top.get("data").unwrap_or(&Value::Null), None),
             artist,
             albums,
+            related_artists,
+            bio,
+        })
+    }
+
+    /// Editorial charts (Top tracks, albums, artists, playlists) from the
+    /// public Deezer API (`chart/0`).
+    pub async fn charts(&self, limit: u32) -> Result<DzSearchResults, SoneError> {
+        let raw = api::public_get(
+            &self.http,
+            "chart/0",
+            &[("limit", limit.to_string())],
+        )
+        .await?;
+        let list = |key: &str| {
+            raw.get(key)
+                .and_then(|v| v.get("data"))
+                .and_then(|d| d.as_array())
+                .cloned()
+                .unwrap_or_default()
+        };
+        let tracks_data = raw
+            .get("tracks")
+            .and_then(|v| v.get("data"))
+            .unwrap_or(&Value::Null);
+        Ok(DzSearchResults {
+            tracks: models::public_tracks(tracks_data, None),
+            albums: list("albums")
+                .iter()
+                .filter_map(models::public_album)
+                .collect(),
+            artists: list("artists")
+                .iter()
+                .filter_map(models::public_artist)
+                .collect(),
+            playlists: list("playlists")
+                .iter()
+                .filter_map(models::public_playlist)
+                .collect(),
+            videos: Vec::new(),
         })
     }
 
@@ -644,12 +752,48 @@ impl DeezerClient {
             .collect())
     }
 
+    pub async fn user_artists(&self) -> Result<Vec<DzArtist>, SoneError> {
+        Ok(self
+            .profile_tab("artists")
+            .await?
+            .iter()
+            .filter_map(models::gw_artist)
+            .collect())
+    }
+
     pub async fn flow(&self) -> Result<Vec<DzTrack>, SoneError> {
         let uid = self.user_id()?;
         let r = self
             .gw("radio.getUserRadio", json!({ "user_id": uid.to_string() }))
             .await?;
         // Seen both as {data: [...]} and as a bare array.
+        let list = r.get("data").cloned().unwrap_or(r);
+        Ok(models::gw_tracks(&list))
+    }
+
+    /// Suggested / radio mix seeded from a single track (`song.getSearchTrackMix`).
+    pub async fn track_mix(&self, track_id: u64) -> Result<Vec<DzTrack>, SoneError> {
+        let r = self
+            .gw(
+                "song.getSearchTrackMix",
+                json!({
+                    "sng_id": track_id.to_string(),
+                    "start_with_input_track": false,
+                }),
+            )
+            .await?;
+        let list = r.get("data").cloned().unwrap_or(r);
+        Ok(models::gw_tracks(&list))
+    }
+
+    /// Radio mix seeded from an artist (`smart.getSmartRadio`).
+    pub async fn artist_radio(&self, artist_id: u64) -> Result<Vec<DzTrack>, SoneError> {
+        let r = self
+            .gw(
+                "smart.getSmartRadio",
+                json!({ "art_id": artist_id.to_string() }),
+            )
+            .await?;
         let list = r.get("data").cloned().unwrap_or(r);
         Ok(models::gw_tracks(&list))
     }
@@ -720,7 +864,108 @@ impl DeezerClient {
             .ok_or_else(|| SoneError::Parse("deezer playlist.create: no playlist id".into()))
     }
 
+    /// Remove tracks from one of the user's playlists.
+    pub async fn remove_from_playlist(
+        &self,
+        playlist_id: u64,
+        track_ids: &[u64],
+    ) -> Result<(), SoneError> {
+        self.gw(
+            "playlist.deleteSongs",
+            json!({
+                "playlist_id": playlist_id.to_string(),
+                "songs": songs_payload(track_ids),
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Delete one of the user's playlists.
+    pub async fn delete_playlist(&self, playlist_id: u64) -> Result<(), SoneError> {
+        self.gw(
+            "playlist.delete",
+            json!({ "playlist_id": playlist_id.to_string() }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Update a playlist's title, description and visibility.
+    pub async fn update_playlist(
+        &self,
+        playlist_id: u64,
+        title: &str,
+        description: &str,
+        public: bool,
+    ) -> Result<(), SoneError> {
+        self.gw(
+            "playlist.update",
+            json!({
+                "playlist_id": playlist_id.to_string(),
+                "title": title,
+                "description": description,
+                "status": if public { 0 } else { 1 },
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Replace the track ordering of one of the user's playlists.
+    pub async fn reorder_playlist(
+        &self,
+        playlist_id: u64,
+        track_ids: &[u64],
+    ) -> Result<(), SoneError> {
+        let order: Vec<String> = track_ids.iter().map(|id| id.to_string()).collect();
+        self.gw(
+            "playlist.updateOrder",
+            json!({
+                "playlist_id": playlist_id.to_string(),
+                "position": "0",
+                "order": order,
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
     // ---- streaming ---------------------------------------------------------
+
+    /// Best-effort 2048-byte ranged probe to read the FLAC `STREAMINFO` header
+    /// (16-bit/44.1 kHz vs 24-bit/up to 192 kHz) before playback starts.
+    async fn probe_flac_streaminfo(&self, url: &str, key_id: u64) -> Option<FlacStreamInfo> {
+        let end = crypto::CHUNK_SIZE - 1;
+        let url = url.to_string();
+        let resp = self
+            .http
+            .send(|c| {
+                c.get(&url)
+                    .header(reqwest::header::RANGE, format!("bytes=0-{end}"))
+                    .timeout(Duration::from_secs(3))
+            })
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let bytes = resp.bytes().await.ok()?;
+        let slice = &bytes[..bytes.len().min(crypto::CHUNK_SIZE)];
+        let mut dec = crypto::StripeDecryptor::new(crypto::track_key(key_id), 0);
+        let mut plain = dec.feed(slice);
+        plain.extend(dec.finish());
+        parse_flac_streaminfo(&plain)
+    }
+
+    /// Record FLAC stream parameters discovered while streaming chunk 0.
+    pub fn record_flac_streaminfo(&self, track_id: u64, info: FlacStreamInfo) {
+        if let Some(entry) = self.lock_streams().get_mut(&track_id) {
+            entry.bit_depth = Some(info.bit_depth);
+            entry.sample_rate = Some(info.sample_rate);
+            entry.channels = Some(info.channels);
+        }
+    }
 
     /// Resolve a CDN URL for `track_id`, trying `formats` in order (Deezer
     /// picks the first it can serve). Refreshes an expired track token and
@@ -753,6 +998,11 @@ impl DeezerClient {
                         let format = Quality::parse(&format).ok_or_else(|| {
                             SoneError::Parse(format!("deezer: unexpected format {format}"))
                         })?;
+                        let flac_info = if format == Quality::Flac {
+                            self.probe_flac_streaminfo(&url, song.id).await
+                        } else {
+                            None
+                        };
                         let resolved = ResolvedStream {
                             track_id,
                             key_id: song.id,
@@ -760,6 +1010,9 @@ impl DeezerClient {
                             format,
                             size: song.filesize(format),
                             gain: song.gain,
+                            bit_depth: flac_info.map(|i| i.bit_depth),
+                            sample_rate: flac_info.map(|i| i.sample_rate),
+                            channels: flac_info.map(|i| i.channels),
                             resolved_at: Instant::now(),
                         };
                         self.lock_streams().insert(track_id, resolved.clone());
@@ -953,5 +1206,56 @@ mod tests {
         assert_eq!(s.gain, Some(-8.5));
         assert_eq!(s.fallback.as_ref().unwrap().id, 11);
         assert!(s.fallback.as_ref().unwrap().token_fresh());
+    }
+
+    fn build_flac_header(sample_rate: u32, channels: u32, bit_depth: u32) -> Vec<u8> {
+        let mut buf = vec![0u8; 42];
+        buf[0..4].copy_from_slice(b"fLaC");
+        buf[4] = 0x00; // STREAMINFO block (type 0)
+        buf[5] = 0;
+        buf[6] = 0;
+        buf[7] = 34; // block length = 34 bytes
+        let ch_bits = (channels - 1) & 0x07;
+        let bps_bits = (bit_depth - 1) & 0x1F;
+        buf[18] = ((sample_rate >> 12) & 0xFF) as u8;
+        buf[19] = ((sample_rate >> 4) & 0xFF) as u8;
+        buf[20] = (((sample_rate & 0x0F) << 4) | (ch_bits << 1) | (bps_bits >> 4)) as u8;
+        buf[21] = ((bps_bits & 0x0F) << 4) as u8;
+        buf
+    }
+
+    #[test]
+    fn deezer_flac_streaminfo_parses_16_44k_and_24_192k() {
+        let cd = build_flac_header(44_100, 2, 16);
+        assert_eq!(
+            parse_flac_streaminfo(&cd),
+            Some(FlacStreamInfo {
+                sample_rate: 44_100,
+                channels: 2,
+                bit_depth: 16,
+            })
+        );
+
+        let hires_96 = build_flac_header(96_000, 2, 24);
+        assert_eq!(
+            parse_flac_streaminfo(&hires_96),
+            Some(FlacStreamInfo {
+                sample_rate: 96_000,
+                channels: 2,
+                bit_depth: 24,
+            })
+        );
+
+        let hires_192 = build_flac_header(192_000, 2, 24);
+        assert_eq!(
+            parse_flac_streaminfo(&hires_192),
+            Some(FlacStreamInfo {
+                sample_rate: 192_000,
+                channels: 2,
+                bit_depth: 24,
+            })
+        );
+
+        assert_eq!(parse_flac_streaminfo(b"ID3notflac"), None);
     }
 }

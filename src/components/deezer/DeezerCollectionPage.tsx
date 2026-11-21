@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { Music, Share, Shuffle } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Music, Search, Share, Shuffle, X } from "lucide-react";
 import { useToast } from "../../contexts/ToastContext";
 import { usePlaySource } from "../../hooks/usePlaySource";
 import type { PlayableSource } from "../../lib/trackSources";
@@ -29,6 +29,10 @@ interface DeezerCollectionPageProps {
   shareUrl?: string;
   onBack: () => void;
   showDateAdded?: boolean;
+  playlistId?: string;
+  isUserPlaylist?: boolean;
+  onTrackRemoved?: (index: number) => void;
+  headerActions?: ReactNode;
 }
 
 /** Header + track list shared by Deezer playlists, Loved Tracks and Flow.
@@ -47,9 +51,26 @@ export default function DeezerCollectionPage({
   shareUrl,
   onBack,
   showDateAdded = false,
+  playlistId,
+  isUserPlaylist,
+  onTrackRemoved,
+  headerActions,
 }: DeezerCollectionPageProps) {
   const playSource = usePlaySource();
   const { showToast } = useToast();
+  const [filterQuery, setFilterQuery] = useState("");
+
+  const filteredTracks = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return tracks;
+    return tracks.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.artist?.name?.toLowerCase().includes(q) ||
+        t.artists?.some((a) => a.name.toLowerCase().includes(q)) ||
+        t.album?.title?.toLowerCase().includes(q),
+    );
+  }, [tracks, filterQuery]);
 
   if (loading) return <DetailPageSkeleton type="playlist" />;
 
@@ -148,17 +169,45 @@ export default function DeezerCollectionPage({
                 Shuffle
               </button>
             </div>
-            {shareUrl && (
-              <button
-                onClick={handleShare}
-                className="flex flex-col items-center gap-1.5 text-th-text-muted hover:text-th-text-primary transition-colors"
-                title="Copy share link"
-                aria-label={`Share ${label.toLowerCase()}`}
-              >
-                <Share size={22} />
-                <span className="text-[11px] font-medium">Share</span>
-              </button>
-            )}
+            <div className="flex items-end gap-5">
+              {tracks.length > 5 && (
+                <div className="relative flex items-center">
+                  <Search
+                    size={15}
+                    className="absolute left-3 text-th-text-faint pointer-events-none"
+                  />
+                  <input
+                    type="text"
+                    value={filterQuery}
+                    onChange={(e) => setFilterQuery(e.target.value)}
+                    placeholder="Filter tracks…"
+                    className="pl-8 pr-7 py-1.5 w-48 rounded-full bg-th-surface/70 border border-th-border-subtle text-[12.5px] text-th-text-primary placeholder:text-th-text-faint focus:outline-none focus:border-th-accent transition-colors"
+                  />
+                  {filterQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setFilterQuery("")}
+                      className="absolute right-2.5 text-th-text-faint hover:text-th-text-primary"
+                      aria-label="Clear filter"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              )}
+              {headerActions}
+              {shareUrl && (
+                <button
+                  onClick={handleShare}
+                  className="flex flex-col items-center gap-1.5 text-th-text-muted hover:text-th-text-primary transition-colors"
+                  title="Copy share link"
+                  aria-label={`Share ${label.toLowerCase()}`}
+                >
+                  <Share size={22} />
+                  <span className="text-[11px] font-medium">Share</span>
+                </button>
+              )}
+            </div>
           </div>
         </PageContainer>
       </div>
@@ -169,9 +218,13 @@ export default function DeezerCollectionPage({
             <p className="text-th-text-muted text-sm py-8 text-center">
               Nothing here yet
             </p>
+          ) : filteredTracks.length === 0 ? (
+            <p className="text-th-text-muted text-sm py-8 text-center">
+              No tracks match &ldquo;{filterQuery}&rdquo;
+            </p>
           ) : (
             <TrackList
-              tracks={tracks}
+              tracks={filteredTracks}
               onPlay={(track) =>
                 void playSource(playable(), { startAt: track })
               }
@@ -180,6 +233,9 @@ export default function DeezerCollectionPage({
               showAlbum={true}
               showCover={true}
               context="playlist"
+              playlistId={playlistId}
+              isUserPlaylist={isUserPlaylist}
+              onTrackRemoved={onTrackRemoved}
             />
           )}
         </div>

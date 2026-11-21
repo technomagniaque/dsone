@@ -9,8 +9,10 @@ import {
   Link,
 } from "lucide-react";
 import { useState, useRef, useCallback } from "react";
+import { useSetAtom } from "jotai";
 import { useToast } from "../contexts/ToastContext";
 import { usePlaybackActions } from "../hooks/usePlaybackActions";
+import { usePlaySource } from "../hooks/usePlaySource";
 import { useFavorites } from "../hooks/useFavorites";
 import { useNavigation } from "../hooks/useNavigation";
 import { usePlaylists } from "../hooks/usePlaylists";
@@ -23,8 +25,13 @@ import { useContentPrefs } from "../hooks/useContentPrefs";
 import AddToPlaylistMenu from "./AddToPlaylistMenu";
 import MenuPortal from "./MenuPortal";
 import { getTrack } from "../api/tidal";
+import { deezerRemoveTracksFromPlaylist } from "../api/deezer";
+import { deezerPlaylistsVersionAtom } from "../atoms/deezer";
 import { isDeezer } from "../lib/provider";
-import { getDeezerShareUrl } from "../lib/deezerSources";
+import {
+  deezerTrackMixPlayable,
+  getDeezerShareUrl,
+} from "../lib/deezerSources";
 
 interface TrackContextMenuProps {
   track: Track;
@@ -50,12 +57,13 @@ export default function TrackContextMenu({
   onTrackRemoved,
 }: TrackContextMenuProps) {
   const { addToQueue, playNextInQueue } = usePlaybackActions();
+  const playSource = usePlaySource();
   const { isTrackFavorite, addFavoriteTrack, removeFavoriteTrack } =
     useFavorites();
-  // Deezer tracks go to Deezer playlists; no TIDAL track radio.
   const deezer = isDeezer(track);
   const { navigateToMix } = useNavigation();
   const { removeTrackFromPlaylist } = usePlaylists();
+  const bumpDeezerPlaylists = useSetAtom(deezerPlaylistsVersionAtom);
   const { showToast } = useToast();
 
   const [showPlaylistSubmenu, setShowPlaylistSubmenu] = useState(false);
@@ -128,6 +136,20 @@ export default function TrackContextMenu({
 
   const handleGoToTrackRadio = useCallback(async () => {
     if (radioLoading) return; // guard against double-click during fetch
+    if (deezer) {
+      setRadioLoading(true);
+      try {
+        const src = await deezerTrackMixPlayable(track);
+        await playSource(src);
+        showToast(`Playing "${trackLabel}" Radio`);
+      } catch {
+        showToast("Track radio unavailable", "info");
+      } finally {
+        setRadioLoading(false);
+        onClose();
+      }
+      return;
+    }
     let mixId = track.mixes?.TRACK_MIX;
     if (!mixId) {
       // Tracks loaded into playback often lack `mixes`; the track-detail
@@ -159,12 +181,26 @@ export default function TrackContextMenu({
       artistPicture: track.artist?.picture,
     });
     onClose();
-  }, [radioLoading, track, navigateToMix, showToast, onClose]);
+  }, [
+    radioLoading,
+    deezer,
+    track,
+    trackLabel,
+    playSource,
+    navigateToMix,
+    showToast,
+    onClose,
+  ]);
 
   const handleRemoveFromPlaylist = useCallback(async () => {
     if (!playlistId) return;
     try {
-      await removeTrackFromPlaylist(playlistId, index);
+      if (deezer) {
+        await deezerRemoveTracksFromPlaylist(Number(playlistId), [track.id]);
+        bumpDeezerPlaylists((v) => v + 1);
+      } else {
+        await removeTrackFromPlaylist(playlistId, index);
+      }
       onTrackRemoved?.(index);
       showToast(`Removed "${trackLabel}" from playlist`);
     } catch (err) {
@@ -174,9 +210,12 @@ export default function TrackContextMenu({
     onClose();
   }, [
     playlistId,
+    deezer,
+    track.id,
     index,
     trackLabel,
     removeTrackFromPlaylist,
+    bumpDeezerPlaylists,
     onTrackRemoved,
     showToast,
     onClose,
@@ -257,10 +296,9 @@ export default function TrackContextMenu({
           </span>
         </button>
 
-        {/* Go to track radio (not for videos; hidden if mixes is populated but TRACK_MIX is absent) */}
-        {!deezer &&
-          track.itemType !== "video" &&
-          (!track.mixes || !!track.mixes?.TRACK_MIX) && (
+        {/* Go to / Start track radio (not for videos; hidden on TIDAL if mixes is populated but TRACK_MIX is absent) */}
+        {track.itemType !== "video" &&
+          (deezer || !track.mixes || !!track.mixes?.TRACK_MIX) && (
             <>
               <div className="my-1 border-t border-th-inset" />
               <button
@@ -270,7 +308,11 @@ export default function TrackContextMenu({
               >
                 <Radio size={18} className="shrink-0 text-th-text-muted" />
                 <span>
-                  {radioLoading ? "Loading radio…" : "Go to track radio"}
+                  {radioLoading
+                    ? "Loading radio…"
+                    : deezer
+                      ? "Start track radio"
+                      : "Go to track radio"}
                 </span>
               </button>
             </>

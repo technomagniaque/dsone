@@ -180,6 +180,7 @@ export interface AlbumDetail {
   upc?: string;
   /** "ALBUM" | "EP" | "SINGLE" */
   albumType?: string;
+  type?: string;
   copyright?: string;
   explicit?: boolean;
   ai?: boolean;
