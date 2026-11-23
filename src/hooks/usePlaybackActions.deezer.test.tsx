@@ -79,7 +79,7 @@ describe("playback dispatches on the track's provider", () => {
     expect(calls("play_tidal_track")).toHaveLength(0);
   });
 
-  it("does not report a Deezer play to TIDAL under its Deezer id", async () => {
+  it("does not report a Deezer play to TIDAL under its Deezer id, while sending Deezer telemetry", async () => {
     const { result } = setup();
     await act(async () => {
       await result.current.playTrack(track({ provider: "deezer" }));
@@ -89,6 +89,11 @@ describe("playback dispatches on the track's provider", () => {
     expect(payload.trackId).toBeNull();
     expect(payload.sourceType).toBeNull();
     expect(payload.sourceId).toBeNull();
+    // Deezer continuous log.listen gets its own dedicated fields.
+    expect(payload.provider).toBe("deezer");
+    expect(payload.deezerTrackId).toBe(42);
+    expect(payload.isShuffle).toBe(false);
+    expect(payload.repeatMode).toBe(0);
     // Scrobblers still get the metadata.
     expect(payload.title).toBe("T");
   });

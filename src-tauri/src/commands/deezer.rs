@@ -587,3 +587,11 @@ pub async fn deezer_set_favorite_playlist(
         state.deezer.remove_favorite_playlist(playlist_id).await
     }
 }
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn deezer_dislike_track(
+    state: State<'_, AppState>,
+    track_id: u64,
+) -> Result<(), SoneError> {
+    state.deezer.dislike_track(track_id).await
+}

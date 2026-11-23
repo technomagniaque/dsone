@@ -210,6 +210,9 @@ export const deezerGetArtistRadio = async (artistId: number) =>
 export const deezerSetFavoriteTrack = (trackId: number, favorite: boolean) =>
   invoke<null>("deezer_set_favorite_track", { trackId, favorite });
 
+export const deezerDislikeTrack = (trackId: number) =>
+  invoke<null>("deezer_dislike_track", { trackId });
+
 export const deezerSetFavoriteAlbum = (albumId: number, favorite: boolean) =>
   invoke<null>("deezer_set_favorite_album", { albumId, favorite });
 

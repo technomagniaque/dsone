@@ -114,9 +114,12 @@ function buildTrackStartedPayload(
   track: Track,
   chosenByUser: boolean,
   source: PlaybackSource | null,
+  playbackState?: { isShuffle: boolean; repeatMode: number },
 ) {
   // TIDAL play reporting keys off trackId/source: a Deezer play must not be
-  // reported to TIDAL under a Deezer id. Scrobblers still get the metadata.
+  // reported to TIDAL under a Deezer id. Scrobblers still get the metadata,
+  // and Deezer's continuous log.listen reporter reads the dedicated deezer*
+  // fields below.
   const deezer = isDeezer(track);
   return {
     artist: getTrackArtistDisplay(track),
@@ -134,6 +137,11 @@ function buildTrackStartedPayload(
     sourceId: deezer || source == null ? null : String(source.id),
     // The backend refuses to report a "deezer" play to TIDAL.
     provider: deezer ? "deezer" : "tidal",
+    deezerTrackId: deezer ? track.id || null : null,
+    deezerSourceType: deezer ? (source?.type ?? null) : null,
+    deezerSourceId: deezer && source != null ? String(source.id) : null,
+    isShuffle: playbackState?.isShuffle ?? false,
+    repeatMode: playbackState?.repeatMode ?? 0,
   };
 }
 
@@ -366,12 +374,16 @@ export function usePlaybackActions() {
         // Playback confirmed — release the load gate and anchor from 0.
         markPlaybackLoading(false);
 
-        // Notify backend for scrobbling
+        // Notify backend for scrobbling & Deezer log.listen
         invoke("notify_track_started", {
           payload: buildTrackStartedPayload(
             stamped,
             opts?.chosenByUser ?? true,
             store.get(playbackSourceAtom),
+            {
+              isShuffle: store.get(shuffleAtom),
+              repeatMode: store.get(repeatAtom),
+            },
           ),
         }).catch(() => {});
         return { ok: true };
@@ -486,12 +498,16 @@ export function usePlaybackActions() {
         // Replay starts at 0; clears the load gate and re-emits to the miniplayer.
         notifySeek(0);
 
-        // Notify backend so the replay is scrobbled
+        // Notify backend so the replay is scrobbled & reported to Deezer
         invoke("notify_track_started", {
           payload: buildTrackStartedPayload(
             track,
             true,
             store.get(playbackSourceAtom),
+            {
+              isShuffle: store.get(shuffleAtom),
+              repeatMode: store.get(repeatAtom),
+            },
           ),
         }).catch(() => {});
       } else {
@@ -591,6 +607,10 @@ export function usePlaybackActions() {
           stamped,
           false,
           store.get(playbackSourceAtom),
+          {
+            isShuffle: store.get(shuffleAtom),
+            repeatMode: store.get(repeatAtom),
+          },
         ),
       }).catch(() => {});
     },
@@ -943,6 +963,10 @@ export function usePlaybackActions() {
                   current,
                   false,
                   store.get(playbackSourceAtom),
+                  {
+                    isShuffle: store.get(shuffleAtom),
+                    repeatMode: store.get(repeatAtom),
+                  },
                 ),
               }).catch(() => {});
             } catch (error: any) {
@@ -1365,12 +1389,16 @@ export function usePlaybackActions() {
           store.set(isPlayingAtom, true);
           markPlaybackLoading(false);
 
-          // Notify backend for scrobbling
+          // Notify backend for scrobbling & Deezer log.listen
           invoke("notify_track_started", {
             payload: buildTrackStartedPayload(
               prevTrack,
               true,
               store.get(playbackSourceAtom),
+              {
+                isShuffle: store.get(shuffleAtom),
+                repeatMode: store.get(repeatAtom),
+              },
             ),
           }).catch(() => {});
         } catch (error: any) {
@@ -1505,12 +1533,16 @@ export function usePlaybackActions() {
               store.set(isPlayingAtom, true);
               markPlaybackLoading(false);
 
-              // Notify backend for scrobbling
+              // Notify backend for scrobbling & Deezer log.listen
               invoke("notify_track_started", {
                 payload: buildTrackStartedPayload(
                   prevTrack,
                   true,
                   store.get(playbackSourceAtom),
+                  {
+                    isShuffle: store.get(shuffleAtom),
+                    repeatMode: store.get(repeatAtom),
+                  },
                 ),
               }).catch(() => {});
             } catch (error: any) {

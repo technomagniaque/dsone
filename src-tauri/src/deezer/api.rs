@@ -232,6 +232,8 @@ pub enum MediaAnswer {
     Unavailable(String),
     /// The track token has expired; fetch fresh song data and retry.
     TokenExpired,
+    /// The user's license token has expired or is unauthorized; refresh session and retry.
+    LicenseExpired,
 }
 
 pub fn get_url_body(license_token: &str, track_token: &str, formats: &[&str]) -> Value {
@@ -277,27 +279,39 @@ pub fn parse_get_url(json: &Value) -> MediaAnswer {
         .and_then(media_errors)
         .or_else(|| media_errors(json))
         .unwrap_or_default();
+    // 1000/1001/1002: license token invalid/expired/unauthorized.
+    if errors.iter().any(|(c, _)| matches!(*c, 1000..=1002)) {
+        return MediaAnswer::LicenseExpired;
+    }
     // 2001: "Track token has expired".
     if errors.iter().any(|(c, _)| *c == 2001) {
         return MediaAnswer::TokenExpired;
     }
-    let media = entry
-        .and_then(|e| e.get("media"))
-        .and_then(|m| m.as_array())
-        .and_then(|m| m.first());
-    if let Some(m) = media {
-        let format = m.get("format").and_then(|f| f.as_str());
-        let url = m
-            .get("sources")
-            .and_then(|s| s.as_array())
-            .and_then(|s| s.first())
-            .and_then(|s| s.get("url"))
-            .and_then(|u| u.as_str());
-        if let (Some(format), Some(url)) = (format, url) {
-            return MediaAnswer::Url {
-                format: format.to_string(),
-                url: url.to_string(),
-            };
+    let media_list = entry.and_then(|e| e.get("media")).and_then(|m| m.as_array());
+    if let Some(list) = media_list {
+        // Prefer FLAC if Deezer ever returns multiple media entries in one response.
+        let pick = list
+            .iter()
+            .find(|m| m.get("format").and_then(|f| f.as_str()) == Some("FLAC"))
+            .or_else(|| {
+                list.iter()
+                    .find(|m| m.get("format").and_then(|f| f.as_str()) == Some("MP3_320"))
+            })
+            .or_else(|| list.first());
+        if let Some(m) = pick {
+            let format = m.get("format").and_then(|f| f.as_str());
+            let url = m
+                .get("sources")
+                .and_then(|s| s.as_array())
+                .and_then(|s| s.first())
+                .and_then(|s| s.get("url"))
+                .and_then(|u| u.as_str());
+            if let (Some(format), Some(url)) = (format, url) {
+                return MediaAnswer::Url {
+                    format: format.to_string(),
+                    url: url.to_string(),
+                };
+            }
         }
     }
     let why = errors
@@ -419,6 +433,22 @@ mod tests {
         let expired =
             json!({"data": [{"errors": [{"code": 2001, "message": "Track token has expired"}]}]});
         assert_eq!(parse_get_url(&expired), MediaAnswer::TokenExpired);
+
+        let lic_expired =
+            json!({"data": [{"errors": [{"code": 1001, "message": "License token expired"}]}]});
+        assert_eq!(parse_get_url(&lic_expired), MediaAnswer::LicenseExpired);
+
+        let multi = json!({"data": [{"media": [
+            {"format": "MP3_320", "sources": [{"url": "https://cdn/mp3"}]},
+            {"format": "FLAC", "sources": [{"url": "https://cdn/flac"}]}
+        ]}]});
+        assert_eq!(
+            parse_get_url(&multi),
+            MediaAnswer::Url {
+                format: "FLAC".into(),
+                url: "https://cdn/flac".into()
+            }
+        );
 
         let rights = json!({"data": [{"errors": [{"code": 2002, "message": "Track token has no sufficient rights on requested media"}]}]});
         assert!(

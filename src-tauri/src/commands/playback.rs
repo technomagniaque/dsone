@@ -308,6 +308,7 @@ pub async fn get_video_metadata(
 pub async fn pause_track(state: State<'_, AppState>) -> Result<(), SoneError> {
     log::debug!("[pause_track]");
     let result = state.audio_player.pause().map_err(SoneError::Audio);
+    state.deezer_reporter.on_pause().await;
     state.tidal_reporter.on_pause().await;
     state.scrobble_manager.on_pause().await;
     result
@@ -317,6 +318,7 @@ pub async fn pause_track(state: State<'_, AppState>) -> Result<(), SoneError> {
 pub async fn resume_track(state: State<'_, AppState>) -> Result<(), SoneError> {
     log::debug!("[resume_track]");
     let result = state.audio_player.resume().map_err(SoneError::Audio);
+    state.deezer_reporter.on_resume().await;
     state.tidal_reporter.on_resume().await;
     state.scrobble_manager.on_resume().await;
     result
@@ -330,6 +332,7 @@ pub(crate) async fn stop_playback(state: &AppState) -> Result<(), SoneError> {
     #[cfg(target_os = "linux")]
     state.mpris.send(crate::mpris::MprisCommand::Stop);
     state.discord.send(crate::discord::DiscordCommand::Stop);
+    state.deezer_reporter.finish_active("stopped").await;
     state.tidal_reporter.on_track_stopped().await;
     state.scrobble_manager.on_track_stopped().await;
     result
@@ -387,6 +390,7 @@ pub async fn seek_track(state: State<'_, AppState>, position_secs: f32) -> Resul
     state.discord.send(crate::discord::DiscordCommand::Seeked {
         position_secs: position_secs as f64,
     });
+    state.deezer_reporter.on_seek().await;
     state.tidal_reporter.on_seek().await;
     state.scrobble_manager.on_seek().await;
     result

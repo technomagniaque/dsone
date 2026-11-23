@@ -1,4 +1,5 @@
 import {
+  Ban,
   ChevronRight,
   ListEnd,
   ListPlus,
@@ -25,7 +26,10 @@ import { useContentPrefs } from "../hooks/useContentPrefs";
 import AddToPlaylistMenu from "./AddToPlaylistMenu";
 import MenuPortal from "./MenuPortal";
 import { getTrack } from "../api/tidal";
-import { deezerRemoveTracksFromPlaylist } from "../api/deezer";
+import {
+  deezerDislikeTrack,
+  deezerRemoveTracksFromPlaylist,
+} from "../api/deezer";
 import { deezerPlaylistsVersionAtom } from "../atoms/deezer";
 import { isDeezer } from "../lib/provider";
 import {
@@ -133,6 +137,17 @@ export default function TrackContextMenu({
     showToast,
     onClose,
   ]);
+
+  const handleDislike = useCallback(async () => {
+    try {
+      await deezerDislikeTrack(track.id);
+      showToast(`Excluded "${trackLabel}" from Deezer recommendations`);
+    } catch (err) {
+      console.error("Failed to dislike Deezer track:", err);
+      showToast("Failed to update Deezer recommendations", "error");
+    }
+    onClose();
+  }, [track.id, trackLabel, showToast, onClose]);
 
   const handleGoToTrackRadio = useCallback(async () => {
     if (radioLoading) return; // guard against double-click during fetch
@@ -295,6 +310,14 @@ export default function TrackContextMenu({
             {isFav ? "Remove from Loved tracks" : "Add to Loved tracks"}
           </span>
         </button>
+
+        {/* Deezer algorithm negative feedback ("Don't recommend this track") */}
+        {deezer && (
+          <button className={menuItemClass} onClick={handleDislike}>
+            <Ban size={18} className="shrink-0 text-th-text-muted" />
+            <span>Don&apos;t recommend</span>
+          </button>
+        )}
 
         {/* Go to / Start track radio (not for videos; hidden on TIDAL if mixes is populated but TRACK_MIX is absent) */}
         {track.itemType !== "video" &&

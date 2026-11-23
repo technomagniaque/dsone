@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod crypto;
+pub mod listen_reporter;
 pub mod models;
 pub mod queue_sync;
 pub mod stream_server;
@@ -301,6 +302,14 @@ impl DeezerClient {
 
     pub fn set_quality(&self, q: Quality) {
         *self.quality.lock().unwrap_or_else(|p| p.into_inner()) = q;
+        // Clear cached resolved streams so changing quality (e.g. MP3 -> FLAC)
+        // takes effect immediately on the next play/seek instead of serving a
+        // stale lower-tier resolution from cache.
+        self.lock_streams().clear();
+    }
+
+    pub fn cached_stream_format(&self, track_id: u64) -> Option<Quality> {
+        self.lock_streams().get(&track_id).map(|s| s.format)
     }
 
     pub fn user_id(&self) -> Result<u64, SoneError> {
@@ -840,16 +849,31 @@ impl DeezerClient {
         playlist_id: u64,
         track_ids: &[u64],
     ) -> Result<(), SoneError> {
-        self.gw(
-            "playlist.addSongs",
-            json!({
-                "playlist_id": playlist_id.to_string(),
-                "songs": songs_payload(track_ids),
-                "offset": -1,
-            }),
-        )
-        .await?;
-        Ok(())
+        let res = self
+            .gw(
+                "playlist.addSongs",
+                json!({
+                    "playlist_id": playlist_id.to_string(),
+                    "songs": songs_payload(track_ids),
+                    "offset": -1,
+                    "ctxt": {
+                        "id": playlist_id.to_string(),
+                        "t": "playlist_page",
+                    },
+                }),
+            )
+            .await;
+        match &res {
+            Ok(_) => log::info!(
+                "[deezer] playlist.addSongs({playlist_id}) added {} track(s)",
+                track_ids.len()
+            ),
+            Err(e) => log::warn!(
+                "[deezer] playlist.addSongs({playlist_id}) failed for {:?}: {e}",
+                track_ids
+            ),
+        }
+        res.map(|_| ())
     }
 
     /// Create a playlist (optionally already holding `track_ids`); returns
@@ -1087,6 +1111,29 @@ impl DeezerClient {
         Ok(())
     }
 
+    /// Low-level `log.listen` sender used by `DeezerListenReporter`.
+    pub async fn send_log_listen_raw(&self, body: Value) -> Result<(), SoneError> {
+        if !self.is_logged_in() {
+            return Ok(());
+        }
+        self.gw("log.listen", body).await?;
+        Ok(())
+    }
+
+    /// Tell Deezer's Flow & recommendation algorithm not to recommend `track_id`.
+    pub async fn dislike_track(&self, track_id: u64) -> Result<(), SoneError> {
+        self.gw(
+            "favorite_dislike.add",
+            json!({
+                "ID": track_id,
+                "TYPE": "song",
+            }),
+        )
+        .await?;
+        log::info!("[deezer] disliked track {track_id} (excluded from Flow/recommendations)");
+        Ok(())
+    }
+
     // ---- lyrics, credits & library favorites (gw-light) --------------------
 
     /// Fetch plain + synced LRC lyrics for a Deezer track (`song.getLyrics`).
@@ -1213,26 +1260,50 @@ impl DeezerClient {
     }
 
     /// Resolve a CDN URL for `track_id`, trying `formats` in order (Deezer
-    /// picks the first it can serve). Refreshes an expired track token and
-    /// walks the region fallback chain. Caches the result for the server.
+    /// picks the first it can serve). Refreshes expired track/license tokens and
+    /// walks the region fallback chain — preferring any candidate that offers
+    /// FLAC when FLAC is requested before stepping down to MP3.
     pub async fn resolve_stream(
         &self,
         track_id: u64,
         formats: &[Quality],
     ) -> Result<ResolvedStream, SoneError> {
-        let license = self
+        let mut license = self
             .lock_session()
             .as_ref()
             .map(|s| s.license_token.clone())
             .ok_or(SoneError::NotAuthenticated)?;
         let names: Vec<&str> = formats.iter().map(|q| q.as_str()).collect();
-        let mut candidate = Some(self.song_source(track_id).await?);
+        let wants_flac = formats.first() == Some(&Quality::Flac);
+
+        // Flatten the primary song + any region fallback chain.
+        let mut chain = Vec::new();
+        let mut cur = Some(self.song_source(track_id).await?);
+        while let Some(mut s) = cur.take() {
+            cur = s.fallback.take().map(|b| *b);
+            chain.push(s);
+        }
+
+        // If FLAC is requested and a fallback edition advertises FILESIZE_FLAC
+        // while the primary does not, try the FLAC-capable edition first.
+        if wants_flac && chain.len() > 1 && chain[0].filesize(Quality::Flac).is_none() {
+            if let Some(flac_idx) = chain
+                .iter()
+                .position(|s| s.filesize(Quality::Flac).is_some())
+            {
+                chain.swap(0, flac_idx);
+            }
+        }
+
         let mut reason = String::from("no stream");
-        while let Some(mut song) = candidate.take() {
+        let mut license_refreshed = false;
+        let mut best_fallback: Option<ResolvedStream> = None;
+
+        for mut song in chain {
             if !song.token_fresh() && song.id != track_id {
                 song = self.song_source(song.id).await?;
             }
-            let mut refreshed = false;
+            let mut token_refreshed = false;
             loop {
                 let Some(token) = song.token.clone() else {
                     reason = "no track token".into();
@@ -1260,11 +1331,42 @@ impl DeezerClient {
                             channels: flac_info.map(|i| i.channels),
                             resolved_at: Instant::now(),
                         };
-                        self.lock_streams().insert(track_id, resolved.clone());
-                        return Ok(resolved);
+                        log::info!(
+                            "[deezer] track {track_id} (key_id={}): resolved {} (filesize_flac={:?}, filesize_320={:?}, bit_depth={:?}, rate={:?})",
+                            song.id,
+                            format.as_str(),
+                            song.filesize(Quality::Flac),
+                            song.filesize(Quality::Mp3_320),
+                            resolved.bit_depth,
+                            resolved.sample_rate
+                        );
+                        // If we wanted FLAC and got it (or didn't ask for FLAC), return immediately.
+                        if !wants_flac || format == Quality::Flac {
+                            self.lock_streams().insert(track_id, resolved.clone());
+                            return Ok(resolved);
+                        }
+                        // Otherwise keep the best non-FLAC candidate and still check remaining fallbacks for FLAC.
+                        if best_fallback.is_none() {
+                            best_fallback = Some(resolved);
+                        }
+                        break;
                     }
-                    MediaAnswer::TokenExpired if !refreshed => {
-                        refreshed = true;
+                    MediaAnswer::LicenseExpired if !license_refreshed => {
+                        license_refreshed = true;
+                        log::info!("[deezer] license_token expired/unauthorized, refreshing session");
+                        self.refresh_session().await?;
+                        license = self
+                            .lock_session()
+                            .as_ref()
+                            .map(|s| s.license_token.clone())
+                            .ok_or(SoneError::NotAuthenticated)?;
+                    }
+                    MediaAnswer::LicenseExpired => {
+                        reason = "license token expired".into();
+                        break;
+                    }
+                    MediaAnswer::TokenExpired if !token_refreshed => {
+                        token_refreshed = true;
                         song = self.song_source(song.id).await?;
                     }
                     MediaAnswer::TokenExpired => {
@@ -1277,7 +1379,10 @@ impl DeezerClient {
                     }
                 }
             }
-            candidate = song.fallback.map(|b| *b);
+        }
+        if let Some(resolved) = best_fallback {
+            self.lock_streams().insert(track_id, resolved.clone());
+            return Ok(resolved);
         }
         Err(SoneError::Api {
             status: 404,

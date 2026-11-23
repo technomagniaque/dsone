@@ -272,6 +272,7 @@ pub struct AppState {
     pub mpris: mpris::MprisHandle,
     pub scrobble_manager: scrobble::ScrobbleManager,
     pub tidal_reporter: tidal_report::TidalReporter,
+    pub deezer_reporter: deezer::listen_reporter::DeezerListenReporter,
     pub discord: discord::DiscordHandle,
     pub idle_inhibitor: Mutex<idle_inhibit::IdleInhibitor>,
     pub mcp_state: crate::mcp::McpStateRef,
@@ -519,9 +520,12 @@ impl AppState {
                 .map(|s| s.deezer_quality.clone())
                 .unwrap_or_else(defaults::deezer_quality),
         ));
+        let deezer_reporter =
+            deezer::listen_reporter::DeezerListenReporter::new(Arc::clone(&deezer));
 
         Self {
             deezer,
+            deezer_reporter,
             audio_player,
             pipeline_probe,
             tidal_client: Mutex::new(tidal_client),
@@ -836,6 +840,7 @@ pub fn run() {
                         let state = handle.state::<AppState>();
                         state.scrobble_manager.try_scrobble_finished().await;
                         state.tidal_reporter.try_finish().await;
+                        state.deezer_reporter.finish_active("finished").await;
                     });
                 });
             }
@@ -872,6 +877,7 @@ pub fn run() {
                         let state = handle.state::<AppState>();
                         state.scrobble_manager.try_scrobble_finished().await;
                         state.tidal_reporter.try_finish().await;
+                        state.deezer_reporter.finish_active("finished").await;
                     });
                 });
             }
@@ -1141,6 +1147,7 @@ pub fn run() {
             commands::deezer::deezer_set_favorite_album,
             commands::deezer::deezer_set_favorite_artist,
             commands::deezer::deezer_set_favorite_playlist,
+            commands::deezer::deezer_dislike_track,
             commands::deezer::deezer_pull_cloud_queue,
             commands::deezer::deezer_push_cloud_queue,
             commands::deezer::deezer_get_history,
@@ -1254,6 +1261,7 @@ pub fn run() {
                     state.idle_inhibitor.lock().await.uninhibit().await;
                     state.scrobble_manager.flush().await;
                     state.tidal_reporter.flush().await;
+                    state.deezer_reporter.finish_active("exit").await;
                 });
             }
         });

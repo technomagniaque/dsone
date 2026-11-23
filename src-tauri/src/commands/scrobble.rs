@@ -38,6 +38,19 @@ pub struct TrackStartedPayload {
     /// "deezer" for Deezer plays. Absent means TIDAL (older frontends).
     #[serde(default)]
     pub provider: Option<String>,
+    /// Dedicated Deezer telemetry fields so `track_id`/`source_*` stay `None`
+    /// for TIDAL play-reporting isolation while Deezer's `log.listen` gets the
+    /// exact Deezer track id, context, shuffle, and repeat state.
+    #[serde(default)]
+    pub deezer_track_id: Option<u64>,
+    #[serde(default)]
+    pub deezer_source_type: Option<String>,
+    #[serde(default)]
+    pub deezer_source_id: Option<String>,
+    #[serde(default)]
+    pub is_shuffle: bool,
+    #[serde(default)]
+    pub repeat_mode: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -70,35 +83,29 @@ pub async fn notify_track_started(
     };
     // A Deezer id is not a TIDAL id: never report it to TIDAL. Passing `None`
     // still closes out (and reports) a displaced TIDAL track. For Deezer tracks,
-    // log the listen to Deezer (`log.listen`) in the background so cross-device
-    // history and Flow recommendations stay up to date.
+    // feed the continuous DeezerListenReporter (`log.listen` with `next_media`,
+    // 30s milestone, and exact active `lt` on completion/skip) so Flow and
+    // Deezer's recommendation algorithm always stay accurate.
     let is_deezer = payload.provider.as_deref() == Some("deezer");
     if is_deezer {
-        if let Some(track_id) = payload.track_id {
-            let deezer = state.deezer.clone();
-            let duration = payload.duration_secs as u64;
-            let (ctx_type, ctx_id) = match &source {
-                Some((t, id)) => (Some(t.clone()), Some(id.clone())),
-                None => (None, None),
-            };
-            tokio::spawn(async move {
-                let fmt = deezer.quality().as_str().to_string();
-                if let Err(e) = deezer
-                    .log_listen(
-                        track_id,
-                        duration.min(30),
-                        &fmt,
-                        false,
-                        0,
-                        ctx_id.as_deref(),
-                        ctx_type.as_deref(),
-                    )
-                    .await
-                {
-                    log::debug!("[deezer] log.listen failed: {e}");
-                }
-            });
-        }
+        let dz_id = payload.deezer_track_id.or(payload.track_id);
+        let dz_start = dz_id.map(|track_id| crate::deezer::listen_reporter::DeezerTrackStart {
+            track_id,
+            duration_secs: payload.duration_secs as u64,
+            source_type: payload
+                .deezer_source_type
+                .clone()
+                .or_else(|| source.as_ref().map(|(t, _)| t.clone())),
+            source_id: payload
+                .deezer_source_id
+                .clone()
+                .or_else(|| source.as_ref().map(|(_, id)| id.clone())),
+            is_shuffle: payload.is_shuffle,
+            repeat_mode: payload.repeat_mode,
+        });
+        state.deezer_reporter.on_track_started(dz_start).await;
+    } else {
+        state.deezer_reporter.on_track_started(None).await;
     }
     let tidal_track_id = if is_deezer {
         None
@@ -115,6 +122,7 @@ pub async fn notify_track_started(
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn notify_track_paused(state: State<'_, AppState>) -> Result<(), SoneError> {
+    state.deezer_reporter.on_pause().await;
     state.tidal_reporter.on_pause().await;
     state.scrobble_manager.on_pause().await;
     Ok(())
@@ -122,6 +130,7 @@ pub async fn notify_track_paused(state: State<'_, AppState>) -> Result<(), SoneE
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn notify_track_resumed(state: State<'_, AppState>) -> Result<(), SoneError> {
+    state.deezer_reporter.on_resume().await;
     state.tidal_reporter.on_resume().await;
     state.scrobble_manager.on_resume().await;
     Ok(())
@@ -129,6 +138,7 @@ pub async fn notify_track_resumed(state: State<'_, AppState>) -> Result<(), Sone
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn notify_track_seeked(state: State<'_, AppState>) -> Result<(), SoneError> {
+    state.deezer_reporter.on_seek().await;
     state.tidal_reporter.on_seek().await;
     state.scrobble_manager.on_seek().await;
     Ok(())
@@ -136,6 +146,7 @@ pub async fn notify_track_seeked(state: State<'_, AppState>) -> Result<(), SoneE
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn notify_track_stopped(state: State<'_, AppState>) -> Result<(), SoneError> {
+    state.deezer_reporter.finish_active("stopped").await;
     state.tidal_reporter.on_track_stopped().await;
     state.scrobble_manager.on_track_stopped().await;
     Ok(())

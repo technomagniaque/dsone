@@ -17,6 +17,7 @@ import { useEscapeDismiss } from "../hooks/useEscapeDismiss";
 import { DISMISS_PRIORITY } from "../lib/dismissStack";
 import { type Playlist, type Provider, getTidalImageUrl } from "../types";
 import { playlistCountLabel } from "../utils/itemHelpers";
+import { safeErrorMessage } from "../lib/errorUtils";
 import TidalImage from "./TidalImage";
 import MenuPortal from "./MenuPortal";
 import Toggle from "./Toggle";
@@ -535,32 +536,52 @@ export default function AddToPlaylistMenu({
         if (deezer) bumpDeezerPlaylists((v) => v + 1);
         else setTidalPlaylists([]);
       } catch (err: any) {
-        const isDuplicateError = (e: unknown): boolean => {
+        const extractErrorText = (e: unknown): string => {
+          const parts: string[] = [];
+          const msg = safeErrorMessage(e, "");
+          if (msg) parts.push(msg);
           try {
             const parsed = typeof e === "string" ? JSON.parse(e) : e;
-            if (parsed?.kind === "Api" && parsed?.message?.status === 409)
-              return true;
-          } catch {}
-          const text = String(e).toLowerCase();
-          return (
-            text.includes("409") ||
-            text.includes("dupe") ||
-            // Deezer: playlist.addSongs answers ERROR_DATA_EXISTS
-            text.includes("exists")
-          );
+            if (parsed?.kind === "Api" && parsed?.message?.status === 409) {
+              parts.push("409");
+            }
+            if (typeof parsed?.message?.body === "string") {
+              parts.push(parsed.message.body);
+            } else if (typeof parsed?.message === "string") {
+              parts.push(parsed.message);
+            }
+            parts.push(JSON.stringify(parsed));
+          } catch {
+            parts.push(String(e));
+          }
+          return parts.join(" ").toLowerCase();
         };
 
-        if (isDuplicateError(err)) {
+        const errorText = extractErrorText(err);
+        const isDuplicate =
+          errorText.includes("409") ||
+          errorText.includes("dupe") ||
+          // Deezer: playlist.addSongs answers ERROR_DATA_EXISTS
+          errorText.includes("error_data_exists") ||
+          errorText.includes("exists");
+        const isQuota = errorText.includes("quota_error");
+
+        if (isDuplicate) {
           setError(
             trackIds.length > 1
               ? "Some tracks already in this playlist"
               : "Track already in this playlist",
           );
+        } else if (isQuota) {
+          setError("Playlist track limit reached");
         } else {
           setError(
-            trackIds.length > 1
-              ? "Failed to add tracks"
-              : "Failed to add track",
+            safeErrorMessage(
+              err,
+              trackIds.length > 1
+                ? "Failed to add tracks"
+                : "Failed to add track",
+            ),
           );
         }
       } finally {
